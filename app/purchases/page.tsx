@@ -4,7 +4,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
 import { format } from "date-fns";
-import { CalendarIcon, Package, ArrowDown } from "lucide-react";
+import { CalendarIcon, Package } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
@@ -97,7 +97,7 @@ export default function PurchasesPage() {
     },
   });
 
-  // Fetch recent purchases
+  // Fetch recent purchases with product information
   const { data: recentPurchases, isLoading: purchasesLoading } = useQuery({
     queryKey: ["purchases"],
     queryFn: async () => {
@@ -106,7 +106,8 @@ export default function PurchasesPage() {
         .select(
           `
           *,
-          product:products (
+          products (
+            id,
             name
           )
         `
@@ -120,26 +121,33 @@ export default function PurchasesPage() {
 
   const recordPurchase = useMutation({
     mutationFn: async (values: z.infer<typeof formSchema>) => {
-      // First record the purchase
-      const { error: purchaseError } = await supabase.from("purchases").insert({
-        product_id: parseInt(values.product_id),
-        quantity: parseInt(values.quantity),
-        price: parseFloat(values.price),
-        purchase_date: values.purchase_date.toISOString().split("T")[0],
-      });
+      try {
+        // First record the purchase
+        const { error: purchaseError } = await supabase
+          .from("purchases")
+          .insert({
+            product_id: parseInt(values.product_id),
+            quantity: parseInt(values.quantity),
+            price: parseFloat(values.price),
+            purchase_date: values.purchase_date.toISOString().split("T")[0],
+          });
 
-      if (purchaseError) throw purchaseError;
+        if (purchaseError) throw purchaseError;
 
-      // Then update the product quantity
-      const { error: updateError } = await supabase.rpc(
-        "update_product_quantity",
-        {
-          p_id: parseInt(values.product_id),
-          qty: parseInt(values.quantity),
-        }
-      );
+        // Then update the product quantity
+        const { error: updateError } = await supabase.rpc(
+          "update_product_quantity",
+          {
+            p_id: parseInt(values.product_id),
+            qty: parseInt(values.quantity),
+          }
+        );
 
-      if (updateError) throw updateError;
+        if (updateError) throw updateError;
+      } catch (error) {
+        console.error("Error recording purchase:", error);
+        throw error;
+      }
     },
     onSuccess: () => {
       toast({
@@ -151,12 +159,15 @@ export default function PurchasesPage() {
       queryClient.invalidateQueries({ queryKey: ["products"] });
     },
     onError: (error) => {
+      console.error("Error recording purchase:", error);
       toast({
         title: "Error",
-        description: "Failed to record purchase. Please try again.",
+        description:
+          error instanceof Error
+            ? error.message
+            : "Failed to record purchase. Please try again.",
         variant: "destructive",
       });
-      console.error("Error recording purchase:", error);
     },
   });
 
@@ -326,7 +337,7 @@ export default function PurchasesPage() {
                 <div className="flex-1">
                   <div className="flex justify-between items-start">
                     <div>
-                      <p className="font-medium">{purchase.product.name}</p>
+                      <p className="font-medium">{purchase.products.name}</p>
                       <p className="text-sm text-muted-foreground">
                         {format(new Date(purchase.purchase_date), "PPP")}
                       </p>
