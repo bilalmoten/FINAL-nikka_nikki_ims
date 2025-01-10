@@ -72,19 +72,19 @@ export default function Dashboard() {
   }).reverse();
 
   const salesChartData = last7Days.map((date) => ({
-    date,
+    date: new Date(date).toLocaleDateString('en-US', { weekday: 'short' }),
     sales: salesData?.filter((s) => s.sale_date === date).reduce((sum, s) => sum + s.price, 0) || 0,
   }));
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      <div>
         <h1 className="text-3xl font-bold text-primary">
           Nikka Nikki Dashboard
         </h1>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         <Card className="bg-gradient-to-br from-pink-500 to-rose-500 text-white">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Gift Sets</CardTitle>
@@ -243,13 +243,12 @@ export default function Dashboard() {
 function DashboardSkeleton() {
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      <div>
         <Skeleton className="h-9 w-[200px]" />
-        <Skeleton className="h-9 w-[120px]" />
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        {Array(4)
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        {Array(3)
           .fill(null)
           .map((_, i) => (
             <Card key={i} className="relative overflow-hidden">
