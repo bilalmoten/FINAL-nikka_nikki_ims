@@ -1,19 +1,28 @@
-import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs"
+import { createServerClient } from "@supabase/ssr"
 import { cookies } from "next/headers"
 import { NextResponse } from "next/server"
 
-export async function POST() {
-    try {
-        // Revalidate the dashboard page
-        await Promise.all([
-            // Add any specific cache invalidation here if needed
-            // For now, we'll just revalidate the page
-        ])
+export async function GET() {
+    const cookieStore = cookies()
+    const supabase = createServerClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+        {
+            cookies: {
+                get(name: string) {
+                    return cookieStore.get(name)?.value
+                },
+            },
+        }
+    )
 
-        return NextResponse.json({ revalidated: true, now: Date.now() })
-    } catch (err) {
-        return NextResponse.json({ revalidated: false, message: "Error revalidating" }, { status: 500 })
+    const { data: { session }, error } = await supabase.auth.getSession()
+
+    if (error || !session) {
+        return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
     }
+
+    return NextResponse.json({ message: "Session refreshed" })
 }
 
 export const runtime = "edge" 
