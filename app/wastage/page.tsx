@@ -1,118 +1,240 @@
-'use client'
+"use client";
 
-import { useState } from 'react'
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs'
-import { useRouter } from 'next/navigation'
-import { useToast } from "@/components/ui/use-toast"
-import { Loader2 } from 'lucide-react'
+import { zodResolver } from "@hookform/resolvers/zod";
+import { useForm } from "react-hook-form";
+import * as z from "zod";
+import { format } from "date-fns";
+import { CalendarIcon } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Calendar } from "@/components/ui/calendar";
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { useToast } from "@/components/ui/use-toast";
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
-export default function Wastage() {
-  const [wastage, setWastage] = useState({ item: '', quantity: '', reason: '', date: new Date().toISOString().split('T')[0] })
-  const [isLoading, setIsLoading] = useState(false)
-  const router = useRouter()
-  const supabase = createClientComponentClient()
-  const { toast } = useToast()
+const formSchema = z.object({
+  product_id: z.string({
+    required_error: "Please select a product.",
+  }),
+  quantity: z.string().min(1, "Quantity is required"),
+  wastage_date: z.date({
+    required_error: "A date is required.",
+  }),
+  reason: z.string().min(1, "Please provide a reason for wastage"),
+});
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setIsLoading(true)
-    const { item, quantity, reason, date } = wastage
-    const quantityNum = parseInt(quantity)
+export default function WastageForm() {
+  const { toast } = useToast();
+  const supabase = createClientComponentClient();
+  const queryClient = useQueryClient();
 
-    if (!item || isNaN(quantityNum) || !reason) {
+  // Fetch products for the dropdown
+  const { data: products, isLoading: productsLoading } = useQuery({
+    queryKey: ["products"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("products")
+        .select("*")
+        .order("name");
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  const form = useForm<z.infer<typeof formSchema>>({
+    resolver: zodResolver(formSchema),
+    defaultValues: {
+      reason: "",
+    },
+  });
+
+  const recordWastage = useMutation({
+    mutationFn: async (values: z.infer<typeof formSchema>) => {
+      // First record the wastage
+      const { error: wastageError } = await supabase.from("wastage").insert({
+        product_id: parseInt(values.product_id),
+        quantity: parseInt(values.quantity),
+        wastage_date: values.wastage_date.toISOString().split("T")[0],
+        reason: values.reason,
+      });
+
+      if (wastageError) throw wastageError;
+
+      // Then update the product quantity
+      const { error: updateError } = await supabase.rpc(
+        "update_product_quantity",
+        {
+          p_id: parseInt(values.product_id),
+          qty: -parseInt(values.quantity),
+        }
+      );
+
+      if (updateError) throw updateError;
+    },
+    onSuccess: () => {
       toast({
-        title: "Error",
-        description: "Please fill in all fields correctly",
-        variant: "destructive",
-      })
-      setIsLoading(false)
-      return
-    }
-
-    try {
-      // Record wastage
-      const { error: wastageError } = await supabase
-        .from('wastage')
-        .insert([
-          { product_id: item, quantity: quantityNum, reason, wastage_date: date }
-        ])
-
-      if (wastageError) throw wastageError
-
-      // Update inventory
-      const { error: updateError } = await supabase
-        .from('products')
-        .update({ quantity: supabase.raw('quantity - ' + quantityNum) })
-        .eq('id', item)
-
-      if (updateError) throw updateError
-
-      toast({
-        title: "Success",
-        description: "Wastage recorded successfully",
-      })
-      setWastage({ item: '', quantity: '', reason: '', date: new Date().toISOString().split('T')[0] })
-      router.refresh()
-    } catch (error) {
+        title: "Wastage Recorded",
+        description: "The wastage has been successfully recorded.",
+      });
+      form.reset();
+      queryClient.invalidateQueries({ queryKey: ["products"] });
+    },
+    onError: (error) => {
       toast({
         title: "Error",
         description: "Failed to record wastage. Please try again.",
         variant: "destructive",
-      })
-    } finally {
-      setIsLoading(false)
-    }
+      });
+      console.error("Error recording wastage:", error);
+    },
+  });
+
+  function onSubmit(values: z.infer<typeof formSchema>) {
+    recordWastage.mutate(values);
   }
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setWastage({ ...wastage, [e.target.name]: e.target.value })
+  if (productsLoading) {
+    return <div>Loading...</div>;
   }
 
   return (
     <div className="space-y-6">
-      <h1 className="text-3xl font-bold">Record Wastage</h1>
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="space-y-2">
-          <Label htmlFor="item">Item</Label>
-          <Select onValueChange={(value) => setWastage({ ...wastage, item: value })}>
-            <SelectTrigger>
-              <SelectValue placeholder="Select item" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="1">Gift Set</SelectItem>
-              <SelectItem value="2">Soap (Ready)</SelectItem>
-              <SelectItem value="3">Powder</SelectItem>
-              <SelectItem value="4">Lotion (Ready)</SelectItem>
-              <SelectItem value="5">Shampoo (Ready)</SelectItem>
-              <SelectItem value="6">Soap (Wrapped)</SelectItem>
-              <SelectItem value="7">Soap Boxes</SelectItem>
-              <SelectItem value="8">Lotion (Unlabeled)</SelectItem>
-              <SelectItem value="9">Shampoo (Unlabeled)</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="quantity">Quantity Wasted</Label>
-          <Input id="quantity" name="quantity" type="number" value={wastage.quantity} onChange={handleChange} required />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="reason">Reason for Wastage</Label>
-          <Input id="reason" name="reason" value={wastage.reason} onChange={handleChange} required />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="date">Wastage Date</Label>
-          <Input id="date" name="date" type="date" value={wastage.date} onChange={handleChange} required />
-        </div>
-        <Button type="submit" disabled={isLoading}>
-          {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-          Record Wastage
-        </Button>
-      </form>
+      <div>
+        <h3 className="text-lg font-medium">Record Wastage</h3>
+        <p className="text-sm text-muted-foreground">
+          Record any damaged or wasted products.
+        </p>
+      </div>
+      <Form {...form}>
+        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
+          <FormField
+            control={form.control}
+            name="product_id"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Product</FormLabel>
+                <Select
+                  onValueChange={field.onChange}
+                  defaultValue={field.value}
+                >
+                  <FormControl>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select a product" />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent>
+                    {products?.map((product) => (
+                      <SelectItem
+                        key={product.id}
+                        value={product.id.toString()}
+                      >
+                        {product.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <FormField
+            control={form.control}
+            name="quantity"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Quantity</FormLabel>
+                <FormControl>
+                  <Input
+                    type="number"
+                    placeholder="Enter quantity"
+                    {...field}
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <FormField
+            control={form.control}
+            name="wastage_date"
+            render={({ field }) => (
+              <FormItem className="flex flex-col">
+                <FormLabel>Date</FormLabel>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <FormControl>
+                      <Button
+                        variant={"outline"}
+                        className={cn(
+                          "w-[240px] pl-3 text-left font-normal",
+                          !field.value && "text-muted-foreground"
+                        )}
+                      >
+                        {field.value ? (
+                          format(field.value, "PPP")
+                        ) : (
+                          <span>Pick a date</span>
+                        )}
+                        <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
+                      </Button>
+                    </FormControl>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start">
+                    <Calendar
+                      mode="single"
+                      selected={field.value}
+                      onSelect={field.onChange}
+                      disabled={(date) =>
+                        date > new Date() || date < new Date("2023-01-01")
+                      }
+                      initialFocus
+                    />
+                  </PopoverContent>
+                </Popover>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <FormField
+            control={form.control}
+            name="reason"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Reason</FormLabel>
+                <FormControl>
+                  <Textarea placeholder="Enter reason for wastage" {...field} />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <Button type="submit" disabled={recordWastage.isPending}>
+            {recordWastage.isPending ? "Recording..." : "Record Wastage"}
+          </Button>
+        </form>
+      </Form>
     </div>
-  )
+  );
 }
-

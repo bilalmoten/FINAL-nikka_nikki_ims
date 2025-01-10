@@ -1,146 +1,219 @@
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Gift, Package, Droplet, Wind, Zap } from 'lucide-react'
+"use client";
 
-// This would typically come from a database
-const inventory = {
-  giftSet: {
-    readyInCartons: 800,
-    outerCardboard: 214,
-    emptyThermacol: 98
-  },
-  soap: {
-    wrapped: 92,
-    emptyBoxes: 48,
-    ready: 73
-  },
-  powder: {
-    ready: 939
-  },
-  lotion: {
-    filledUnlabeled: 747,
-    ready: 292
-  },
-  shampoo: {
-    filledUnlabeled: 928,
-    ready: 913
-  }
-}
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Package, AlertTriangle, ArrowUpDown } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { useDashboardQuery } from "@/hooks/use-dashboard-query";
+import { useState } from "react";
+import { Skeleton } from "@/components/ui/skeleton";
 
-const productIcons = {
-  giftSet: Gift,
-  soap: Droplet,
-  powder: Wind,
-  lotion: Droplet,
-  shampoo: Zap
-}
-
-export default function DetailedInventory() {
+function InventorySkeleton() {
   return (
     <div className="space-y-6">
-      <h1 className="text-3xl font-bold text-primary">Detailed Inventory</h1>
-      
-      <Tabs defaultValue="all" className="space-y-4">
-        <TabsList>
-          <TabsTrigger value="all">All Products</TabsTrigger>
-          <TabsTrigger value="giftSet">Gift Set</TabsTrigger>
-          <TabsTrigger value="components">Components</TabsTrigger>
-        </TabsList>
-        <TabsContent value="all">
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {Object.entries(inventory).map(([product, stages]) => {
-              const Icon = productIcons[product as keyof typeof productIcons]
-              return (
-                <Card key={product} className="overflow-hidden">
-                  <CardHeader className="bg-gradient-to-r from-blue-500 to-purple-500 text-white">
-                    <CardTitle className="flex items-center space-x-2">
-                      <Icon className="h-5 w-5" />
-                      <span className="capitalize">{product}</span>
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="p-0">
-                    <Table>
-                      <TableBody>
-                        {Object.entries(stages).map(([stage, quantity]) => (
-                          <TableRow key={`${product}-${stage}`}>
-                            <TableCell className="font-medium capitalize">{stage}</TableCell>
-                            <TableCell className="text-right">{quantity}</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </CardContent>
-                </Card>
-              )
-            })}
+      <div>
+        <Skeleton className="h-9 w-[250px] mb-2" />
+        <Skeleton className="h-4 w-[350px]" />
+      </div>
+
+      <div className="space-y-4">
+        <Skeleton className="h-10 w-[200px]" />
+
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+          <div className="space-y-2">
+            <Skeleton className="h-[125px]" />
           </div>
-        </TabsContent>
-        <TabsContent value="giftSet">
+        </div>
+
+        <div className="rounded-lg border">
+          <div className="p-4">
+            <Skeleton className="h-8 w-[200px] mb-4" />
+            <div className="space-y-3">
+              {Array(5)
+                .fill(null)
+                .map((_, i) => (
+                  <div key={i} className="flex justify-between items-center">
+                    <Skeleton className="h-4 w-[200px]" />
+                    <Skeleton className="h-4 w-[100px]" />
+                    <Skeleton className="h-6 w-[100px]" />
+                  </div>
+                ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function InventoryPage() {
+  const { products, isLoading } = useDashboardQuery();
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
+
+  if (isLoading) {
+    return <InventorySkeleton />;
+  }
+
+  const readyProducts = products?.filter(
+    (p) =>
+      p.name.includes("Ready") ||
+      p.name === "Gift Set" ||
+      (!p.name.includes("Unlabeled") &&
+        !p.name.includes("Wrapped") &&
+        !p.name.includes("Boxes") &&
+        !p.name.includes("Thermacol") &&
+        !p.name.includes("Cardboard"))
+  );
+
+  const rawProducts = products?.filter(
+    (p) =>
+      p.name.includes("Unlabeled") ||
+      p.name.includes("Wrapped") ||
+      p.name.includes("Boxes") ||
+      p.name.includes("Thermacol") ||
+      p.name.includes("Cardboard")
+  );
+
+  const sortProducts = (productsToSort: typeof products) => {
+    return [...(productsToSort || [])].sort((a, b) => {
+      const comparison = a.name.localeCompare(b.name);
+      return sortOrder === "asc" ? comparison : -comparison;
+    });
+  };
+
+  const sortedReadyProducts = sortProducts(readyProducts);
+  const sortedRawProducts = sortProducts(rawProducts);
+
+  const InventoryTable = ({ data }: { data: typeof products }) => (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>
+            <Button
+              variant="ghost"
+              onClick={() =>
+                setSortOrder((current) => (current === "asc" ? "desc" : "asc"))
+              }
+              className="flex items-center gap-1"
+            >
+              Product
+              <ArrowUpDown className="h-4 w-4" />
+            </Button>
+          </TableHead>
+          <TableHead>Quantity</TableHead>
+          <TableHead>Status</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {data?.map((product) => (
+          <TableRow key={product.id}>
+            <TableCell className="font-medium">{product.name}</TableCell>
+            <TableCell>{product.quantity}</TableCell>
+            <TableCell>
+              {product.quantity < 100 ? (
+                <Badge variant="destructive" className="gap-1">
+                  <AlertTriangle className="h-3 w-3" />
+                  Low Stock
+                </Badge>
+              ) : (
+                <Badge variant="secondary" className="gap-1">
+                  <Package className="h-3 w-3" />
+                  In Stock
+                </Badge>
+              )}
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-3xl font-bold text-primary">
+          Inventory Management
+        </h1>
+        <p className="text-muted-foreground">
+          Track and manage your product inventory
+        </p>
+      </div>
+
+      <Tabs defaultValue="ready" className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="ready">Ready Products</TabsTrigger>
+          <TabsTrigger value="raw">Raw Materials</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="ready" className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">
+                  Total Ready Products
+                </CardTitle>
+                <Package className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">
+                  {readyProducts?.reduce((sum, p) => sum + p.quantity, 0)}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {readyProducts?.length} different products
+                </p>
+              </CardContent>
+            </Card>
+          </div>
+
           <Card>
-            <CardHeader className="bg-gradient-to-r from-pink-500 to-rose-500 text-white">
-              <CardTitle className="flex items-center space-x-2">
-                <Gift className="h-5 w-5" />
-                <span>Gift Set Components</span>
-              </CardTitle>
+            <CardHeader>
+              <CardTitle>Ready Products Inventory</CardTitle>
             </CardHeader>
             <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Component</TableHead>
-                    <TableHead className="text-right">Quantity</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {Object.entries(inventory.giftSet).map(([component, quantity]) => (
-                    <TableRow key={component}>
-                      <TableCell className="font-medium capitalize">{component}</TableCell>
-                      <TableCell className="text-right">{quantity}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+              <InventoryTable data={sortedReadyProducts || []} />
             </CardContent>
           </Card>
         </TabsContent>
-        <TabsContent value="components">
-          <div className="grid gap-4 md:grid-cols-2">
-            {Object.entries(inventory).filter(([product]) => product !== 'giftSet').map(([product, stages]) => {
-              const Icon = productIcons[product as keyof typeof productIcons]
-              return (
-                <Card key={product}>
-                  <CardHeader className="bg-gradient-to-r from-cyan-500 to-blue-500 text-white">
-                    <CardTitle className="flex items-center space-x-2">
-                      <Icon className="h-5 w-5" />
-                      <span className="capitalize">{product}</span>
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Stage</TableHead>
-                          <TableHead className="text-right">Quantity</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {Object.entries(stages).map(([stage, quantity]) => (
-                          <TableRow key={`${product}-${stage}`}>
-                            <TableCell className="font-medium capitalize">{stage}</TableCell>
-                            <TableCell className="text-right">{quantity}</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </CardContent>
-                </Card>
-              )
-            })}
+
+        <TabsContent value="raw" className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">
+                  Total Raw Materials
+                </CardTitle>
+                <Package className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">
+                  {rawProducts?.reduce((sum, p) => sum + p.quantity, 0)}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {rawProducts?.length} different materials
+                </p>
+              </CardContent>
+            </Card>
           </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Raw Materials Inventory</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <InventoryTable data={sortedRawProducts || []} />
+            </CardContent>
+          </Card>
         </TabsContent>
       </Tabs>
     </div>
-  )
+  );
 }
-
