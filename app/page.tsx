@@ -19,18 +19,9 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useDashboardQuery } from "@/hooks/use-dashboard-query";
 
 export default function Dashboard() {
-  const {
-    products,
-    salesData,
-    purchasesData,
-    productionData,
-    wastageData,
-    summary,
-    isLoading,
-    refreshAll,
-  } = useDashboardQuery();
+  const { products, salesData, productsLoading, salesLoading } = useDashboardQuery();
 
-  if (isLoading) {
+  if (productsLoading || salesLoading) {
     return <DashboardSkeleton />;
   }
 
@@ -40,24 +31,18 @@ export default function Dashboard() {
       soap: products?.find((p) => p.name === "Soap (Ready)")?.quantity || 0,
       powder: products?.find((p) => p.name === "Powder")?.quantity || 0,
       lotion: products?.find((p) => p.name === "Lotion (Ready)")?.quantity || 0,
-      shampoo:
-        products?.find((p) => p.name === "Shampoo (Ready)")?.quantity || 0,
+      shampoo: products?.find((p) => p.name === "Shampoo (Ready)")?.quantity || 0,
     },
     unfinishedProducts: {
       soap: {
-        wrapped:
-          products?.find((p) => p.name === "Soap (Wrapped)")?.quantity || 0,
-        emptyBoxes:
-          products?.find((p) => p.name === "Soap Boxes")?.quantity || 0,
+        wrapped: products?.find((p) => p.name === "Soap (Wrapped)")?.quantity || 0,
+        emptyBoxes: products?.find((p) => p.name === "Soap Boxes")?.quantity || 0,
       },
       lotion: {
-        filledUnlabeled:
-          products?.find((p) => p.name === "Lotion (Unlabeled)")?.quantity || 0,
+        filledUnlabeled: products?.find((p) => p.name === "Lotion (Unlabeled)")?.quantity || 0,
       },
       shampoo: {
-        filledUnlabeled:
-          products?.find((p) => p.name === "Shampoo (Unlabeled)")?.quantity ||
-          0,
+        filledUnlabeled: products?.find((p) => p.name === "Shampoo (Unlabeled)")?.quantity || 0,
       },
     },
   };
@@ -72,6 +57,13 @@ export default function Dashboard() {
     products?.find((p) => p.name === "Empty Thermacol")?.quantity || 0
   );
 
+  // Get today's date in YYYY-MM-DD format
+  const today = new Date().toISOString().split("T")[0];
+
+  // Calculate today's sales
+  const todaySales = salesData?.filter((s) => s.sale_date === today) || [];
+  const totalSales = todaySales.reduce((sum, s) => sum + s.price, 0);
+
   // Prepare data for charts
   const last7Days = Array.from({ length: 7 }, (_, i) => {
     const d = new Date();
@@ -81,18 +73,7 @@ export default function Dashboard() {
 
   const salesChartData = last7Days.map((date) => ({
     date,
-    sales:
-      salesData
-        ?.filter((s) => s.sale_date === date)
-        .reduce((sum, s) => sum + s.price, 0) || 0,
-  }));
-
-  const productionChartData = last7Days.map((date) => ({
-    date,
-    production:
-      productionData
-        ?.filter((p) => p.production_date === date)
-        .reduce((sum, p) => sum + p.quantity, 0) || 0,
+    sales: salesData?.filter((s) => s.sale_date === date).reduce((sum, s) => sum + s.price, 0) || 0,
   }));
 
   return (
@@ -101,15 +82,6 @@ export default function Dashboard() {
         <h1 className="text-3xl font-bold text-primary">
           Nikka Nikki Dashboard
         </h1>
-        <Button
-          variant="outline"
-          size="sm"
-          className="gap-2"
-          onClick={() => refreshAll()}
-        >
-          <RefreshCw className="h-4 w-4" />
-          Refresh Data
-        </Button>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
@@ -135,40 +107,24 @@ export default function Dashboard() {
           <CardContent>
             <div className="text-2xl font-bold">{potentialGiftSets}</div>
             <p className="text-xs text-purple-200">Can be assembled</p>
-            <Progress
-              className="mt-2"
-              value={(potentialGiftSets / 1000) * 100}
-            />
+            <Progress className="mt-2" value={(potentialGiftSets / 1000) * 100} />
           </CardContent>
         </Card>
 
-        <Card className="bg-gradient-to-br from-blue-500 to-cyan-500 text-white">
+        <Card className="bg-gradient-to-br from-green-500 to-emerald-500 text-white">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">
-              Today's Production
-            </CardTitle>
-            <Activity className="h-4 w-4 text-blue-200" />
+            <CardTitle className="text-sm font-medium">Today's Sales</CardTitle>
+            <DollarSign className="h-4 w-4 text-green-200" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{summary.todayProduction}</div>
-            <p className="text-xs text-blue-200">Gift sets assembled today</p>
+            <div className="text-2xl font-bold">${totalSales.toFixed(2)}</div>
+            <p className="text-xs text-green-200">{todaySales.length} transactions</p>
           </CardContent>
         </Card>
+      </div>
 
-        <Card className="bg-gradient-to-br from-yellow-500 to-orange-500 text-white">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">
-              Today's Wastage
-            </CardTitle>
-            <AlertTriangle className="h-4 w-4 text-yellow-200" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{summary.todayWastage}</div>
-            <p className="text-xs text-yellow-200">Items wasted today</p>
-          </CardContent>
-        </Card>
-
-        <Card className="col-span-2 row-span-2">
+      <div className="grid gap-4 md:grid-cols-2">
+        <Card className="col-span-2">
           <CardHeader>
             <CardTitle className="text-lg font-semibold text-primary">
               Ready Products
@@ -199,43 +155,6 @@ export default function Dashboard() {
         <Card>
           <CardHeader>
             <CardTitle className="text-lg font-semibold text-primary">
-              Recent Wastage
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              {summary.recentWastage.length > 0 ? (
-                summary.recentWastage.map((waste, index) => (
-                  <div
-                    key={index}
-                    className="flex justify-between items-start border-b pb-2 last:border-0"
-                  >
-                    <div>
-                      <p className="font-medium">{waste.product}</p>
-                      <p className="text-sm text-muted-foreground">
-                        {new Date(waste.date).toLocaleDateString()}
-                      </p>
-                      <p className="text-sm text-muted-foreground">
-                        {waste.reason}
-                      </p>
-                    </div>
-                    <span className="font-semibold text-destructive">
-                      -{waste.quantity}
-                    </span>
-                  </div>
-                ))
-              ) : (
-                <p className="text-sm text-muted-foreground">
-                  No recent wastage recorded
-                </p>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg font-semibold text-primary">
               Unfinished Products
             </CardTitle>
           </CardHeader>
@@ -258,34 +177,6 @@ export default function Dashboard() {
           </CardContent>
         </Card>
 
-        <Card className="bg-gradient-to-br from-green-500 to-emerald-500 text-white">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">
-              Financial Summary
-            </CardTitle>
-            <DollarSign className="h-4 w-4 text-green-200" />
-          </CardHeader>
-          <CardContent>
-            <div className="flex justify-between items-center">
-              <div>
-                <p className="text-xs text-green-200">Total Sales</p>
-                <p className="text-lg font-bold">
-                  ${summary.totalSales.toFixed(2)}
-                </p>
-              </div>
-              <TrendingUp className="h-8 w-8 text-green-200" />
-            </div>
-            <div className="mt-2">
-              <p className="text-xs text-green-200">Profit</p>
-              <p className="text-lg font-bold">
-                ${(summary.totalSales - summary.totalPurchases).toFixed(2)}
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      <div className="grid gap-4 md:grid-cols-2">
         <Card>
           <CardHeader>
             <CardTitle>Recent Activity</CardTitle>
@@ -293,11 +184,8 @@ export default function Dashboard() {
           <CardContent>
             <div className="space-y-4">
               {last7Days.map((date) => {
-                const salesForDay =
-                  salesData?.filter((s) => s.sale_date === date) || [];
-                const productionForDay =
-                  productionData?.filter((p) => p.production_date === date) ||
-                  [];
+                const salesForDay = salesData?.filter((s) => s.sale_date === date) || [];
+                const totalSales = salesForDay.reduce((sum, s) => sum + s.price, 0);
 
                 return (
                   <div key={date} className="flex items-center justify-between">
@@ -308,15 +196,8 @@ export default function Dashboard() {
                         })}
                       </p>
                       <p className="text-sm text-muted-foreground">
-                        Sales: $
-                        {salesForDay
-                          .reduce((sum, s) => sum + s.price, 0)
-                          .toFixed(2)}
+                        Sales: ${totalSales.toFixed(2)}
                       </p>
-                    </div>
-                    <div className="text-sm text-muted-foreground">
-                      Production:{" "}
-                      {productionForDay.reduce((sum, p) => sum + p.quantity, 0)}
                     </div>
                   </div>
                 );
@@ -353,10 +234,7 @@ export default function Dashboard() {
         </Card>
       </div>
 
-      <Charts
-        salesChartData={salesChartData}
-        productionChartData={productionChartData}
-      />
+      <Charts salesChartData={salesChartData} />
     </div>
   );
 }

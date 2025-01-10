@@ -56,10 +56,10 @@ function InventorySkeleton() {
 }
 
 export default function InventoryPage() {
-  const { products, isLoading } = useDashboardQuery();
+  const { products, productsLoading } = useDashboardQuery();
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
 
-  if (isLoading) {
+  if (productsLoading) {
     return <InventorySkeleton />;
   }
 
