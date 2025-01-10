@@ -160,27 +160,18 @@ export default function ProductionPage() {
 
         const productUpdates: { id: number; quantity: number }[] = [];
 
-        // Log available products
-        console.log("Available products:", products);
-
         // Determine which products to update based on the process
         switch (values.process) {
           case PRODUCTION_PROCESSES.SOAP_BOXING: {
-            const wrappedSoap = products?.find(
+            const wrappedSoap = products.find(
               (p: Product) => p.name === "Soap (Wrapped)"
             );
-            const emptyBoxes = products?.find(
+            const emptyBoxes = products.find(
               (p: Product) => p.name === "Soap Boxes"
             );
-            const readySoap = products?.find(
+            const readySoap = products.find(
               (p: Product) => p.name === "Soap (Ready)"
             );
-
-            console.log("Soap Boxing Process - Found Products:", {
-              wrappedSoap,
-              emptyBoxes,
-              readySoap,
-            });
 
             if (!wrappedSoap || !emptyBoxes || !readySoap) {
               throw new Error(
@@ -194,10 +185,7 @@ export default function ProductionPage() {
               );
             }
 
-            if (
-              wrappedSoap.quantity < quantity ||
-              emptyBoxes.quantity < quantity
-            ) {
+            if (wrappedSoap.quantity < quantity || emptyBoxes.quantity < quantity) {
               throw new Error(
                 `Insufficient materials. Required: ${quantity}, Available: Wrapped Soap: ${wrappedSoap.quantity}, Empty Boxes: ${emptyBoxes.quantity}`
               );
@@ -212,17 +200,12 @@ export default function ProductionPage() {
           }
 
           case PRODUCTION_PROCESSES.SHAMPOO_LABELING: {
-            const unlabeledShampoo = products?.find(
+            const unlabeledShampoo = products.find(
               (p: Product) => p.name === "Shampoo (Unlabeled)"
             );
-            const readyShampoo = products?.find(
+            const readyShampoo = products.find(
               (p: Product) => p.name === "Shampoo (Ready)"
             );
-
-            console.log("Shampoo Labeling Process - Found Products:", {
-              unlabeledShampoo,
-              readyShampoo,
-            });
 
             if (!unlabeledShampoo || !readyShampoo) {
               throw new Error(
@@ -249,17 +232,12 @@ export default function ProductionPage() {
           }
 
           case PRODUCTION_PROCESSES.LOTION_LABELING: {
-            const unlabeledLotion = products?.find(
+            const unlabeledLotion = products.find(
               (p: Product) => p.name === "Lotion (Unlabeled)"
             );
-            const readyLotion = products?.find(
+            const readyLotion = products.find(
               (p: Product) => p.name === "Lotion (Ready)"
             );
-
-            console.log("Lotion Labeling Process - Found Products:", {
-              unlabeledLotion,
-              readyLotion,
-            });
 
             if (!unlabeledLotion || !readyLotion) {
               throw new Error(
@@ -286,37 +264,27 @@ export default function ProductionPage() {
           }
 
           case PRODUCTION_PROCESSES.GIFT_SET_ASSEMBLY: {
-            const readySoap = products?.find(
+            const readySoap = products.find(
               (p: Product) => p.name === "Soap (Ready)"
             );
-            const readyShampoo = products?.find(
+            const readyShampoo = products.find(
               (p: Product) => p.name === "Shampoo (Ready)"
             );
-            const readyLotion = products?.find(
+            const readyLotion = products.find(
               (p: Product) => p.name === "Lotion (Ready)"
             );
-            const powder = products?.find(
+            const powder = products.find(
               (p: Product) => p.name === "Powder"
             );
-            const giftBox = products?.find(
+            const giftBox = products.find(
               (p: Product) => p.name === "Gift Box Outer Cardboard"
             );
-            const thermacol = products?.find(
+            const thermacol = products.find(
               (p: Product) => p.name === "Empty Thermacol"
             );
-            const giftSet = products?.find(
+            const giftSet = products.find(
               (p: Product) => p.name === "Gift Set"
             );
-
-            console.log("Gift Set Assembly Process - Found Products:", {
-              readySoap,
-              readyShampoo,
-              readyLotion,
-              powder,
-              giftBox,
-              thermacol,
-              giftSet,
-            });
 
             if (
               !readySoap ||
@@ -374,36 +342,22 @@ export default function ProductionPage() {
           }
         }
 
-        console.log("Product updates to be applied:", productUpdates);
-
-        // Record the production
-        const { data: productionData, error: productionError } = await supabase
+        // Record the production first
+        const { error: productionError } = await supabase
           .from("production")
           .insert({
             process: values.process,
             quantity: quantity,
             production_date: values.production_date.toISOString().split("T")[0],
-          })
-          .select()
-          .single();
+          });
 
         if (productionError) {
-          console.error("Error recording production:", productionError);
-          throw new Error(
-            `Failed to record production: ${productionError.message}`
-          );
+          throw new Error(`Failed to record production: ${productionError.message}`);
         }
 
-        if (!productionData) {
-          throw new Error("Production record was not created");
-        }
-
-        console.log("Production record created successfully:", productionData);
-
-        // Update all product quantities
+        // Then update all product quantities
         for (const update of productUpdates) {
-          console.log("Applying update:", update);
-          const { data: updateData, error: updateError } = await supabase.rpc(
+          const { error: updateError } = await supabase.rpc(
             "update_product_quantity",
             {
               p_id: update.id,
@@ -412,29 +366,17 @@ export default function ProductionPage() {
           );
 
           if (updateError) {
-            console.error("Error updating product quantity:", updateError);
-            throw new Error(
-              `Failed to update product quantity: ${updateError.message}`
-            );
+            throw new Error(`Failed to update product quantity: ${updateError.message}`);
           }
-
-          console.log("Product quantity updated successfully:", updateData);
         }
-
-        console.log("All product quantities updated successfully");
       } catch (error) {
-        console.error("Production process failed:", error);
         if (error instanceof Error) {
-          throw new Error(`Production failed: ${error.message}`);
-        } else if (typeof error === "object" && error !== null) {
-          throw new Error(`Production failed: ${JSON.stringify(error)}`);
-        } else {
-          throw new Error("An unknown error occurred during production");
+          throw error;
         }
+        throw new Error("An unknown error occurred during production");
       }
     },
     onSuccess: () => {
-      console.log("Production recorded successfully");
       toast({
         title: "Production Recorded",
         description: "The production has been successfully recorded.",
@@ -447,21 +389,13 @@ export default function ProductionPage() {
       queryClient.invalidateQueries({ queryKey: ["production"] });
       queryClient.invalidateQueries({ queryKey: ["products"] });
     },
-    onError: (error: unknown) => {
-      console.error("Production mutation error:", error);
-      let errorMessage = "Failed to record production. Please try again.";
-
-      if (error instanceof Error) {
-        errorMessage = error.message;
-      } else if (typeof error === "object" && error !== null) {
-        errorMessage = JSON.stringify(error);
-      }
-
+    onError: (error: Error) => {
       toast({
         title: "Error",
-        description: errorMessage,
+        description: error.message || "Failed to record production. Please try again.",
         variant: "destructive",
       });
+      console.error("Production error:", error);
     },
   });
 
