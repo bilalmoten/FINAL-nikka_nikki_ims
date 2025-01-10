@@ -35,6 +35,20 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
+
+interface Product {
+  id: number;
+  name: string;
+  quantity: number;
+}
+
+interface Production {
+  id: number;
+  process: string;
+  quantity: number;
+  production_date: string;
+}
 
 const PRODUCTION_PROCESSES = {
   SOAP_BOXING: "soap_boxing",
@@ -55,7 +69,11 @@ const formSchema = z.object({
       required_error: "Please select a production process.",
     }
   ),
-  quantity: z.string().min(1, "Quantity is required"),
+  quantity: z.string()
+    .min(1, "Quantity is required")
+    .refine((val) => !isNaN(parseInt(val)) && parseInt(val) > 0, {
+      message: "Quantity must be a positive number",
+    }),
   production_date: z.date({
     required_error: "A date is required.",
   }),
@@ -89,13 +107,14 @@ export default function ProductionPage() {
   const { toast } = useToast();
   const supabase = createClientComponentClient();
   const queryClient = useQueryClient();
+  const [selectedProductQty, setSelectedProductQty] = useState<number | null>(null);
 
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
     defaultValues: {
       process: undefined,
       quantity: "",
-      production_date: undefined,
+      production_date: new Date(),
     },
   });
 
@@ -108,7 +127,7 @@ export default function ProductionPage() {
         .select("*")
         .order("name");
       if (error) throw error;
-      return data;
+      return data as Product[];
     },
   });
 
@@ -122,7 +141,7 @@ export default function ProductionPage() {
         .order("production_date", { ascending: false })
         .limit(10);
       if (error) throw error;
-      return data;
+      return data as Production[];
     },
   });
 
@@ -148,10 +167,14 @@ export default function ProductionPage() {
         switch (values.process) {
           case PRODUCTION_PROCESSES.SOAP_BOXING: {
             const wrappedSoap = products?.find(
-              (p) => p.name === "Soap (Wrapped)"
+              (p: Product) => p.name === "Soap (Wrapped)"
             );
-            const emptyBoxes = products?.find((p) => p.name === "Soap Boxes");
-            const readySoap = products?.find((p) => p.name === "Soap (Ready)");
+            const emptyBoxes = products?.find(
+              (p: Product) => p.name === "Soap Boxes"
+            );
+            const readySoap = products?.find(
+              (p: Product) => p.name === "Soap (Ready)"
+            );
 
             console.log("Soap Boxing Process - Found Products:", {
               wrappedSoap,
@@ -190,10 +213,10 @@ export default function ProductionPage() {
 
           case PRODUCTION_PROCESSES.SHAMPOO_LABELING: {
             const unlabeledShampoo = products?.find(
-              (p) => p.name === "Shampoo (Unlabeled)"
+              (p: Product) => p.name === "Shampoo (Unlabeled)"
             );
             const readyShampoo = products?.find(
-              (p) => p.name === "Shampoo (Ready)"
+              (p: Product) => p.name === "Shampoo (Ready)"
             );
 
             console.log("Shampoo Labeling Process - Found Products:", {
@@ -227,10 +250,10 @@ export default function ProductionPage() {
 
           case PRODUCTION_PROCESSES.LOTION_LABELING: {
             const unlabeledLotion = products?.find(
-              (p) => p.name === "Lotion (Unlabeled)"
+              (p: Product) => p.name === "Lotion (Unlabeled)"
             );
             const readyLotion = products?.find(
-              (p) => p.name === "Lotion (Ready)"
+              (p: Product) => p.name === "Lotion (Ready)"
             );
 
             console.log("Lotion Labeling Process - Found Products:", {
@@ -263,21 +286,27 @@ export default function ProductionPage() {
           }
 
           case PRODUCTION_PROCESSES.GIFT_SET_ASSEMBLY: {
-            const readySoap = products?.find((p) => p.name === "Soap (Ready)");
+            const readySoap = products?.find(
+              (p: Product) => p.name === "Soap (Ready)"
+            );
             const readyShampoo = products?.find(
-              (p) => p.name === "Shampoo (Ready)"
+              (p: Product) => p.name === "Shampoo (Ready)"
             );
             const readyLotion = products?.find(
-              (p) => p.name === "Lotion (Ready)"
+              (p: Product) => p.name === "Lotion (Ready)"
             );
-            const powder = products?.find((p) => p.name === "Powder");
+            const powder = products?.find(
+              (p: Product) => p.name === "Powder"
+            );
             const giftBox = products?.find(
-              (p) => p.name === "Gift Box Outer Cardboard"
+              (p: Product) => p.name === "Gift Box Outer Cardboard"
             );
             const thermacol = products?.find(
-              (p) => p.name === "Empty Thermacol"
+              (p: Product) => p.name === "Empty Thermacol"
             );
-            const giftSet = products?.find((p) => p.name === "Gift Set");
+            const giftSet = products?.find(
+              (p: Product) => p.name === "Gift Set"
+            );
 
             console.log("Gift Set Assembly Process - Found Products:", {
               readySoap,
@@ -410,7 +439,11 @@ export default function ProductionPage() {
         title: "Production Recorded",
         description: "The production has been successfully recorded.",
       });
-      form.reset();
+      form.reset({
+        process: undefined,
+        quantity: "",
+        production_date: new Date(),
+      });
       queryClient.invalidateQueries({ queryKey: ["production"] });
       queryClient.invalidateQueries({ queryKey: ["products"] });
     },
@@ -583,7 +616,7 @@ export default function ProductionPage() {
           <h2 className="text-xl font-semibold text-primary">
             Recent Production
           </h2>
-          {recentProduction?.map((production) => (
+          {recentProduction?.map((production: Production) => (
             <Card key={production.id}>
               <CardContent className="flex items-center gap-4 py-4">
                 <Badge className="bg-purple-500">

@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+
+import { createClient } from "@/utils/supabase/server";
 import { toast } from "@/components/ui/use-toast";
 
 // Types for our mutations
@@ -27,8 +28,8 @@ interface RecordWastageInput {
     // Add other fields as needed
 }
 
-export function useMutations() {
-    const supabase = createClientComponentClient();
+export async function useMutations() {
+    const supabase = await createClient();
     const queryClient = useQueryClient();
 
     const recordSale = useMutation({

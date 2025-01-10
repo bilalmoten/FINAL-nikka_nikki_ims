@@ -34,11 +34,21 @@ import { useToast } from "@/components/ui/use-toast";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
+interface Product {
+  id: number;
+  name: string;
+  quantity: number;
+}
+
 const formSchema = z.object({
   product_id: z.string({
     required_error: "Please select a product.",
   }),
-  quantity: z.string().min(1, "Quantity is required"),
+  quantity: z.string()
+    .min(1, "Quantity is required")
+    .refine((val) => !isNaN(parseInt(val)) && parseInt(val) > 0, {
+      message: "Quantity must be a positive number",
+    }),
   wastage_date: z.date({
     required_error: "A date is required.",
   }),
@@ -59,7 +69,7 @@ export default function WastageForm() {
         .select("*")
         .order("name");
       if (error) throw error;
-      return data;
+      return data as Product[];
     },
   });
 
@@ -68,16 +78,30 @@ export default function WastageForm() {
     defaultValues: {
       product_id: "",
       quantity: "",
+      wastage_date: new Date(),
       reason: "",
     },
   });
 
   const recordWastage = useMutation({
     mutationFn: async (values: z.infer<typeof formSchema>) => {
+      const selectedProduct = products?.find(
+        (p: Product) => p.id === parseInt(values.product_id)
+      );
+
+      if (!selectedProduct) {
+        throw new Error("Selected product not found");
+      }
+
+      const quantity = parseInt(values.quantity);
+      if (quantity > selectedProduct.quantity) {
+        throw new Error(`Not enough stock. Available: ${selectedProduct.quantity}`);
+      }
+
       // First record the wastage
       const { error: wastageError } = await supabase.from("wastage").insert({
         product_id: parseInt(values.product_id),
-        quantity: parseInt(values.quantity),
+        quantity: quantity,
         wastage_date: values.wastage_date.toISOString().split("T")[0],
         reason: values.reason,
       });
@@ -89,7 +113,7 @@ export default function WastageForm() {
         "update_product_quantity",
         {
           p_id: parseInt(values.product_id),
-          qty: -parseInt(values.quantity),
+          qty: -quantity,
         }
       );
 
@@ -100,13 +124,18 @@ export default function WastageForm() {
         title: "Wastage Recorded",
         description: "The wastage has been successfully recorded.",
       });
-      form.reset();
+      form.reset({
+        product_id: "",
+        quantity: "",
+        wastage_date: new Date(),
+        reason: "",
+      });
       queryClient.invalidateQueries({ queryKey: ["products"] });
     },
-    onError: (error) => {
+    onError: (error: Error) => {
       toast({
         title: "Error",
-        description: "Failed to record wastage. Please try again.",
+        description: error.message || "Failed to record wastage. Please try again.",
         variant: "destructive",
       });
       console.error("Error recording wastage:", error);
@@ -147,7 +176,7 @@ export default function WastageForm() {
                     </SelectTrigger>
                   </FormControl>
                   <SelectContent>
-                    {products?.map((product) => (
+                    {products?.map((product: Product) => (
                       <SelectItem
                         key={product.id}
                         value={product.id.toString()}
