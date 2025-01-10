@@ -66,6 +66,8 @@ export default function WastageForm() {
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
     defaultValues: {
+      product_id: "",
+      quantity: "",
       reason: "",
     },
   });

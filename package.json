@@ -3,7 +3,10 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "lint": "next lint",
+    "prod-build": "npm install --legacy-peer-deps && next build",
+    "prod-start": "next start -p $PORT"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

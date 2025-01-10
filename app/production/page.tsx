@@ -93,7 +93,9 @@ export default function ProductionPage() {
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
     defaultValues: {
+      process: undefined,
       quantity: "",
+      production_date: undefined,
     },
   });
 
