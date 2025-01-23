@@ -5,7 +5,7 @@ import { useForm } from "react-hook-form";
 import * as z from "zod";
 import { format } from "date-fns";
 import { CalendarIcon, Factory } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, formatGiftSetQuantity } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import {
@@ -36,6 +36,13 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { createBrowserClient } from "@supabase/ssr";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { DeleteButton } from "@/components/ui/delete-button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 interface Product {
   id: number;
@@ -69,7 +76,8 @@ const formSchema = z.object({
       required_error: "Please select a production process.",
     }
   ),
-  quantity: z.string()
+  quantity: z
+    .string()
     .min(1, "Quantity is required")
     .refine((val) => !isNaN(parseInt(val)) && parseInt(val) > 0, {
       message: "Quantity must be a positive number",
@@ -110,7 +118,9 @@ export default function ProductionPage() {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   );
   const queryClient = useQueryClient();
-  const [selectedProductQty, setSelectedProductQty] = useState<number | null>(null);
+  const [selectedProductQty, setSelectedProductQty] = useState<number | null>(
+    null
+  );
 
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
@@ -188,7 +198,10 @@ export default function ProductionPage() {
               );
             }
 
-            if (wrappedSoap.quantity < quantity || emptyBoxes.quantity < quantity) {
+            if (
+              wrappedSoap.quantity < quantity ||
+              emptyBoxes.quantity < quantity
+            ) {
               throw new Error(
                 `Insufficient materials. Required: ${quantity}, Available: Wrapped Soap: ${wrappedSoap.quantity}, Empty Boxes: ${emptyBoxes.quantity}`
               );
@@ -276,9 +289,7 @@ export default function ProductionPage() {
             const readyLotion = products.find(
               (p: Product) => p.name === "Lotion (Ready)"
             );
-            const powder = products.find(
-              (p: Product) => p.name === "Powder"
-            );
+            const powder = products.find((p: Product) => p.name === "Powder");
             const giftBox = products.find(
               (p: Product) => p.name === "Gift Box Outer Cardboard"
             );
@@ -355,7 +366,9 @@ export default function ProductionPage() {
           });
 
         if (productionError) {
-          throw new Error(`Failed to record production: ${productionError.message}`);
+          throw new Error(
+            `Failed to record production: ${productionError.message}`
+          );
         }
 
         // Then update all product quantities
@@ -369,7 +382,9 @@ export default function ProductionPage() {
           );
 
           if (updateError) {
-            throw new Error(`Failed to update product quantity: ${updateError.message}`);
+            throw new Error(
+              `Failed to update product quantity: ${updateError.message}`
+            );
           }
         }
       } catch (error) {
@@ -384,10 +399,31 @@ export default function ProductionPage() {
         title: "Production Recorded",
         description: "The production has been successfully recorded.",
       });
-      form.reset({
-        process: undefined,
-        quantity: "",
-        production_date: new Date(),
+      queryClient.invalidateQueries({ queryKey: ["production"] });
+      queryClient.invalidateQueries({ queryKey: ["products"] });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description:
+          error.message || "Failed to record production. Please try again.",
+        variant: "destructive",
+      });
+      console.error("Production error:", error);
+    },
+  });
+
+  const deleteProduction = useMutation({
+    mutationFn: async (id: number) => {
+      const { error } = await supabase.rpc("reverse_production", {
+        production_id: id,
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast({
+        title: "Production Reversed",
+        description: "The production record has been successfully reversed.",
       });
       queryClient.invalidateQueries({ queryKey: ["production"] });
       queryClient.invalidateQueries({ queryKey: ["products"] });
@@ -395,16 +431,26 @@ export default function ProductionPage() {
     onError: (error: Error) => {
       toast({
         title: "Error",
-        description: error.message || "Failed to record production. Please try again.",
+        description:
+          error.message || "Failed to reverse production. Please try again.",
         variant: "destructive",
       });
-      console.error("Production error:", error);
+      console.error("Production deletion error:", error);
     },
   });
 
   function onSubmit(values: z.infer<typeof formSchema>) {
     recordProduction.mutate(values);
   }
+
+  // Add a reset handler
+  const handleReset = () => {
+    form.reset({
+      process: undefined,
+      quantity: "",
+      production_date: new Date(),
+    });
+  };
 
   if (productsLoading || productionLoading) {
     return <ProductionSkeleton />;
@@ -426,158 +472,223 @@ export default function ProductionPage() {
   };
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold text-primary">Record Production</h1>
-        <p className="text-muted-foreground">
-          Record production processes and view production history
-        </p>
-      </div>
+    <TooltipProvider>
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-3xl font-bold text-primary">Record Production</h1>
+          <p className="text-muted-foreground">
+            Record production processes and view production history
+          </p>
+        </div>
 
-      <div className="grid gap-6 md:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>New Production</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <Form {...form}>
-              <form
-                onSubmit={form.handleSubmit(onSubmit)}
-                className="space-y-8"
-              >
-                <FormField
-                  control={form.control}
-                  name="process"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Production Process</FormLabel>
-                      <Select
-                        onValueChange={field.onChange}
-                        defaultValue={field.value}
-                      >
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select a process" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {Object.values(PRODUCTION_PROCESSES).map(
-                            (process) => (
-                              <SelectItem key={process} value={process}>
-                                {getProcessDescription(process)}
-                              </SelectItem>
-                            )
-                          )}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name="quantity"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Quantity</FormLabel>
-                      <FormControl>
-                        <Input
-                          type="number"
-                          placeholder="Enter quantity"
-                          {...field}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name="production_date"
-                  render={({ field }) => (
-                    <FormItem className="flex flex-col">
-                      <FormLabel>Date</FormLabel>
-                      <Popover>
-                        <PopoverTrigger asChild>
-                          <FormControl>
-                            <Button
-                              variant={"outline"}
-                              className={cn(
-                                "w-[240px] pl-3 text-left font-normal",
-                                !field.value && "text-muted-foreground"
-                              )}
-                            >
-                              {field.value ? (
-                                format(field.value, "PPP")
-                              ) : (
-                                <span>Pick a date</span>
-                              )}
-                              <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
-                            </Button>
-                          </FormControl>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-auto p-0" align="start">
-                          <Calendar
-                            mode="single"
-                            selected={field.value}
-                            onSelect={field.onChange}
-                            disabled={(date) =>
-                              date > new Date() || date < new Date("2023-01-01")
-                            }
-                            initialFocus
-                          />
-                        </PopoverContent>
-                      </Popover>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <Button
-                  type="submit"
-                  className="w-full"
-                  disabled={recordProduction.isPending}
+        <div className="grid gap-6 md:grid-cols-2">
+          <Card>
+            <CardHeader>
+              <CardTitle>New Production</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <Form {...form}>
+                <form
+                  onSubmit={form.handleSubmit(onSubmit)}
+                  className="space-y-8"
                 >
-                  {recordProduction.isPending
-                    ? "Recording..."
-                    : "Record Production"}
-                </Button>
-              </form>
-            </Form>
-          </CardContent>
-        </Card>
+                  <FormField
+                    control={form.control}
+                    name="process"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Production Process</FormLabel>
+                        <Select
+                          onValueChange={field.onChange}
+                          defaultValue={field.value}
+                        >
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select a process" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            {Object.values(PRODUCTION_PROCESSES).map(
+                              (process) => (
+                                <SelectItem key={process} value={process}>
+                                  {getProcessDescription(process)}
+                                </SelectItem>
+                              )
+                            )}
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
 
-        <div className="space-y-4">
-          <h2 className="text-xl font-semibold text-primary">
-            Recent Production
-          </h2>
-          {recentProduction?.map((production: Production) => (
-            <Card key={production.id}>
-              <CardContent className="flex items-center gap-4 py-4">
-                <Badge className="bg-purple-500">
-                  <Factory className="h-4 w-4 mr-1" />
-                  Production
-                </Badge>
-                <div className="flex-1">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <p className="font-medium">
-                        {getProcessDescription(production.process)}
-                      </p>
-                      <p className="text-sm text-muted-foreground">
-                        {format(new Date(production.production_date), "PPP")}
-                      </p>
-                    </div>
-                    <Badge variant="outline">{production.quantity} units</Badge>
+                  <FormField
+                    control={form.control}
+                    name="quantity"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Quantity</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="number"
+                            placeholder="Enter quantity"
+                            {...field}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="production_date"
+                    render={({ field }) => (
+                      <FormItem className="flex flex-col">
+                        <FormLabel>Date</FormLabel>
+                        <div className="flex gap-2">
+                          <Input
+                            type="date"
+                            {...field}
+                            value={
+                              field.value
+                                ? field.value.toISOString().split("T")[0]
+                                : ""
+                            }
+                            onChange={(e) => {
+                              const date = e.target.value
+                                ? new Date(e.target.value)
+                                : new Date();
+                              field.onChange(date);
+                            }}
+                          />
+                          <Popover>
+                            <PopoverTrigger asChild>
+                              <Button
+                                variant={"outline"}
+                                className={cn(
+                                  "w-[280px]",
+                                  !field.value && "text-muted-foreground"
+                                )}
+                              >
+                                <CalendarIcon className="mr-2 h-4 w-4" />
+                                {field.value ? (
+                                  format(field.value, "PPP")
+                                ) : (
+                                  <span>Pick a date</span>
+                                )}
+                              </Button>
+                            </PopoverTrigger>
+                            <PopoverContent
+                              className="w-auto p-0"
+                              align="start"
+                            >
+                              <Calendar
+                                mode="single"
+                                selected={field.value}
+                                onSelect={field.onChange}
+                                disabled={(date) =>
+                                  date > new Date() ||
+                                  date < new Date("2023-01-01")
+                                }
+                                initialFocus
+                              />
+                            </PopoverContent>
+                          </Popover>
+                        </div>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <div className="flex gap-2">
+                    <Button
+                      type="submit"
+                      className="flex-1"
+                      disabled={recordProduction.isPending}
+                    >
+                      {recordProduction.isPending
+                        ? "Recording..."
+                        : "Record Production"}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={handleReset}
+                    >
+                      Reset Form
+                    </Button>
                   </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+                </form>
+              </Form>
+            </CardContent>
+          </Card>
+
+          <div className="space-y-4">
+            <h2 className="text-xl font-semibold text-primary">
+              Recent Production
+            </h2>
+            {recentProduction?.map((production: Production) => {
+              const quantity = formatGiftSetQuantity(
+                production.quantity,
+                getProcessDescription(production.process)
+              );
+              return (
+                <Card key={production.id}>
+                  <CardContent className="flex items-center gap-4 py-4">
+                    <Badge className="bg-purple-500">
+                      <Factory className="h-4 w-4 mr-1" />
+                      Production
+                    </Badge>
+                    <div className="flex-1">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <p className="font-medium">
+                            {getProcessDescription(production.process)}
+                          </p>
+                          <p className="text-sm text-muted-foreground">
+                            {format(
+                              new Date(production.production_date),
+                              "PPP"
+                            )}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Badge variant="outline">
+                            {production.process ===
+                            PRODUCTION_PROCESSES.GIFT_SET_ASSEMBLY ? (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <span className="cursor-help">
+                                    {quantity.display}
+                                  </span>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <p>Total: {quantity.tooltip}</p>
+                                </TooltipContent>
+                              </Tooltip>
+                            ) : (
+                              quantity.display
+                            )}
+                          </Badge>
+                          <DeleteButton
+                            onDelete={() =>
+                              deleteProduction.mutate(production.id)
+                            }
+                            loading={deleteProduction.isPending}
+                            title="Reverse Production"
+                            description="This will reverse the production process and restore the used materials. This action cannot be undone."
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
         </div>
       </div>
-    </div>
+    </TooltipProvider>
   );
 }

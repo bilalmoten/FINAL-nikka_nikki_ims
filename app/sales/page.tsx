@@ -4,8 +4,14 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
 import { format } from "date-fns";
-import { CalendarIcon, ArrowDown, Printer, Calculator } from "lucide-react";
-import { cn } from "@/lib/utils";
+import {
+  CalendarIcon,
+  ArrowDown,
+  Printer,
+  Calculator,
+  ShoppingCart,
+} from "lucide-react";
+import { cn, formatGiftSetQuantity } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import {
@@ -43,22 +49,154 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { ChevronDown, ChevronRight } from "lucide-react";
+import { DeleteButton } from "@/components/ui/delete-button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
-const formSchema = z.object({
+interface Product {
+  id: number;
+  name: string;
+  quantity: number;
+}
+
+interface SaleItem {
+  id: number;
+  sale_id: number;
+  product_id: number;
+  quantity: number;
+  price_per_unit: number;
+  trade_scheme?: string;
+  discount_percentage?: number;
+  discount_amount?: number;
+  total_price: number;
+  final_price: number;
+  product: Product;
+}
+
+interface Sale {
+  id: number;
+  invoice_number: string;
+  buyer_name: string;
+  contact_no?: string;
+  sale_date: string;
+  bill_discount_percentage?: number;
+  bill_discount_amount?: number;
+  total_amount: number;
+  final_amount: number;
+  notes?: string;
+  items: SaleItem[];
+  product?: Product;
+  quantity?: number;
+  price?: number;
+}
+
+interface Transfer {
+  id: number;
+  product_id: number;
+  from_location_id: number;
+  to_location_id: number;
+  quantity: number;
+  transfer_date: string;
+  product: Product;
+  from_location: Location;
+  to_location: Location;
+}
+
+interface Location {
+  id: number;
+  name: string;
+  address?: string;
+}
+
+interface StockByLocation {
+  [key: number]: Product[];
+}
+
+// Schema for individual sale item
+const saleItemSchema = z.object({
   product_id: z.string({
     required_error: "Please select a product.",
   }),
-  buyer_name: z.string().min(1, "Buyer name is required"),
-  contact_no: z.string().optional(),
   quantity: z.string().min(1, "Quantity is required"),
   price_per_unit: z.string().min(1, "Price per unit is required"),
+  trade_scheme: z.string().optional(),
   discount_percentage: z.string().optional(),
   discount_amount: z.string().optional(),
-  sale_date: z.date({
-    required_error: "A date is required.",
+});
+
+// Main form schema
+const formSchema = z.object({
+  buyer_name: z.string(),
+  contact_no: z.string().optional(),
+  sale_date: z.date(),
+  location_id: z.string({
+    required_error: "Please select a location.",
   }),
   notes: z.string().optional(),
+  bill_discount_percentage: z.string().optional(),
+  bill_discount_amount: z.string().optional(),
+  items: z.array(
+    z.object({
+      product_id: z.string(),
+      quantity: z.string(),
+      price_per_unit: z.string(),
+      trade_scheme: z.string().optional(),
+      discount_percentage: z.string().optional(),
+      discount_amount: z.string().optional(),
+    })
+  ),
 });
+
+type FormValues = z.infer<typeof formSchema>;
+
+// Helper function to calculate trade scheme discount
+function calculateTradeSchemeDiscount(
+  quantity: number,
+  scheme: string
+): number {
+  if (!scheme) return 0;
+
+  const [buy, free] = scheme.split("+").map((num) => parseInt(num.trim()));
+  if (isNaN(buy) || isNaN(free) || buy <= 0 || free <= 0) return 0;
+
+  // Calculate proportional free items
+  const freeItems = (free * quantity) / (buy + free);
+  return freeItems;
+}
+
+// Helper function to calculate item final price
+function calculateItemFinalPrice(
+  quantity: number,
+  pricePerUnit: number,
+  tradeScheme?: string,
+  discountPercentage?: string,
+  discountAmount?: string
+): { totalPrice: number; finalPrice: number } {
+  // Calculate initial total
+  const total = quantity * pricePerUnit;
+
+  // Apply trade scheme discount
+  const freeItems = calculateTradeSchemeDiscount(quantity, tradeScheme || "");
+  const priceAfterTradeScheme = total - freeItems * pricePerUnit;
+
+  // Apply fixed amount discount
+  const discAmt = parseFloat(discountAmount || "0");
+  const priceAfterAmountDiscount = Math.max(0, priceAfterTradeScheme - discAmt);
+
+  // Apply percentage discount
+  const discPerc = parseFloat(discountPercentage || "0");
+  const discountFromPercentage = priceAfterAmountDiscount * (discPerc / 100);
+  const finalPrice = Math.max(
+    0,
+    priceAfterAmountDiscount - discountFromPercentage
+  );
+
+  return { totalPrice: total, finalPrice };
+}
 
 function SalesSkeleton() {
   return (
@@ -84,56 +222,77 @@ function SalesSkeleton() {
   );
 }
 
-// Add type definitions
-interface Product {
-  id: number;
-  name: string;
-  quantity: number;
-}
-
-interface Sale {
-  id: number;
-  product_id: number;
-  buyer_name: string;
-  contact_no?: string;
-  quantity: number;
-  price_per_unit: number;
-  total_price: number;
-  discount_percentage?: number;
-  discount_amount?: number;
-  final_price: number;
-  sale_date: string;
-  notes?: string;
-  product: Product;
-}
-
 export default function SalesPage() {
+  const [totalAmount, setTotalAmount] = useState(0);
+  const [finalAmount, setFinalAmount] = useState(0);
+  const [isOpen, setIsOpen] = useState(false);
   const { toast } = useToast();
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   );
   const queryClient = useQueryClient();
-  const [totalPrice, setTotalPrice] = useState<number>(0);
-  const [finalPrice, setFinalPrice] = useState<number>(0);
-  const [selectedProductQty, setSelectedProductQty] = useState<number | null>(
-    null
-  );
-  const [pricePerPieceAfterDiscount, setPricePerPieceAfterDiscount] =
-    useState<number>(0);
 
-  const form = useForm<z.infer<typeof formSchema>>({
+  const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: {
       buyer_name: "",
       contact_no: "",
-      quantity: "",
-      price_per_unit: "",
-      discount_percentage: "",
-      discount_amount: "",
+      sale_date: new Date(),
+      location_id: "",
       notes: "",
+      items: [
+        {
+          product_id: "",
+          quantity: "",
+          price_per_unit: "",
+          trade_scheme: "",
+          discount_percentage: "",
+          discount_amount: "",
+        },
+      ],
     },
   });
+
+  // Watch form values for calculations
+  const formValues = form.watch();
+
+  // Calculate totals when form values change
+  useEffect(() => {
+    let total = 0;
+    let final = 0;
+
+    // Calculate item-level totals
+    formValues.items.forEach((item) => {
+      if (!item.quantity || !item.price_per_unit) return;
+
+      const qty = parseFloat(item.quantity);
+      const price = parseFloat(item.price_per_unit);
+      const { totalPrice, finalPrice } = calculateItemFinalPrice(
+        qty,
+        price,
+        item.trade_scheme || "",
+        item.discount_percentage || "",
+        item.discount_amount || ""
+      );
+      total += totalPrice;
+      final += finalPrice;
+    });
+
+    // Apply bill-level discounts
+    const billDiscAmt = parseFloat(formValues.bill_discount_amount ?? "0");
+    const billDiscPerc = parseFloat(formValues.bill_discount_percentage ?? "0");
+
+    // First apply fixed amount discount
+    final = Math.max(0, final - billDiscAmt);
+
+    // Then apply percentage discount
+    const billDiscountFromPercentage = final * (billDiscPerc / 100);
+    final = Math.max(0, final - billDiscountFromPercentage);
+
+    setTotalAmount(total);
+    setFinalAmount(final);
+  }, [formValues]);
 
   // Fetch products
   const { data: products, isLoading: productsLoading } = useQuery({
@@ -148,6 +307,68 @@ export default function SalesPage() {
     },
   });
 
+  // Fetch locations
+  const { data: locations, isLoading: locationsLoading } = useQuery({
+    queryKey: ["locations"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("locations")
+        .select("*")
+        .order("name");
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  // Fetch stock by location
+  const { data: stockByLocation } = useQuery<StockByLocation>({
+    queryKey: ["stockByLocation"],
+    queryFn: async () => {
+      const { data: transfers, error: transfersError } = await supabase.from(
+        "transfers"
+      ).select(`
+          *,
+          product:products(*),
+          from_location:locations!from_location_id(*),
+          to_location:locations!to_location_id(*)
+        `);
+      if (transfersError) throw transfersError;
+
+      // Calculate stock per location
+      const stockByLocation = locations?.reduce((acc, location) => {
+        acc[location.id] =
+          products?.map((product: Product) => {
+            const incomingTransfers =
+              transfers
+                ?.filter(
+                  (t: Transfer) =>
+                    t.to_location_id === location.id &&
+                    t.product_id === product.id
+                )
+                .reduce((sum: number, t: Transfer) => sum + t.quantity, 0) || 0;
+
+            const outgoingTransfers =
+              transfers
+                ?.filter(
+                  (t: Transfer) =>
+                    t.from_location_id === location.id &&
+                    t.product_id === product.id
+                )
+                .reduce((sum: number, t: Transfer) => sum + t.quantity, 0) || 0;
+
+            return {
+              ...product,
+              quantity: incomingTransfers - outgoingTransfers,
+            };
+          }) || [];
+        return acc;
+      }, {} as StockByLocation);
+
+      return stockByLocation;
+    },
+    enabled: !!locations && !!products,
+  });
+
   // Organize products into ready and other
   const readyProducts =
     products?.filter(
@@ -158,53 +379,6 @@ export default function SalesPage() {
     products?.filter(
       (p) => !p.name.includes("Ready") && p.name !== "Gift Set"
     ) || [];
-
-  // Watch form values for price calculation
-  const quantity = form.watch("quantity");
-  const pricePerUnit = form.watch("price_per_unit");
-  const discountPercentage = form.watch("discount_percentage");
-  const discountAmount = form.watch("discount_amount");
-  const selectedProductId = form.watch("product_id");
-
-  // Watch product selection
-  useEffect(() => {
-    if (selectedProductId) {
-      const product = products?.find(
-        (p) => p.id === parseInt(selectedProductId)
-      );
-      setSelectedProductQty(product?.quantity || null);
-    } else {
-      setSelectedProductQty(null);
-    }
-  }, [selectedProductId, products]);
-
-  // Calculate total and final price
-  useEffect(() => {
-    const qty = parseFloat(quantity || "0");
-    const price = parseFloat(pricePerUnit || "0");
-    const discPerc = parseFloat(discountPercentage || "0");
-    const discAmt = parseFloat(discountAmount || "0");
-
-    // Calculate initial total
-    const total = qty * price;
-    setTotalPrice(total);
-
-    // Apply fixed amount discount first
-    const priceAfterAmountDiscount = Math.max(0, total - discAmt);
-
-    // Then apply percentage discount
-    const discountFromPercentage = priceAfterAmountDiscount * (discPerc / 100);
-    const finalPriceAfterDiscount =
-      priceAfterAmountDiscount - discountFromPercentage;
-    setFinalPrice(Math.max(0, finalPriceAfterDiscount));
-
-    // Calculate price per piece after all discounts
-    if (qty > 0) {
-      setPricePerPieceAfterDiscount(finalPriceAfterDiscount / qty);
-    } else {
-      setPricePerPieceAfterDiscount(0);
-    }
-  }, [quantity, pricePerUnit, discountPercentage, discountAmount]);
 
   // Fetch recent sales
   const { data: recentSales, isLoading } = useQuery<Sale[]>({
@@ -228,48 +402,26 @@ export default function SalesPage() {
   const recordSale = useMutation({
     mutationFn: async (values: z.infer<typeof formSchema>) => {
       try {
-        // Validate product quantity
-        const product = products?.find(
-          (p) => p.id === parseInt(values.product_id)
-        );
-        if (!product) {
-          throw new Error("Selected product not found");
-        }
-
-        const requestedQty = parseInt(values.quantity);
-        if (requestedQty > product.quantity) {
-          throw new Error(
-            `Insufficient stock. Only ${product.quantity} units available.`
-          );
-        }
-
-        // Record the sale
+        // Start a Supabase transaction
         const { data: saleData, error: saleError } = await supabase
           .from("sales")
           .insert({
-            product_id: parseInt(values.product_id),
+            invoice_number: `INV-${Date.now()}`,
             buyer_name: values.buyer_name,
             contact_no: values.contact_no,
-            quantity: requestedQty,
-            price: parseFloat(values.price_per_unit),
-            price_per_unit: parseFloat(values.price_per_unit),
-            total_price: totalPrice,
-            discount_percentage: values.discount_percentage
-              ? parseFloat(values.discount_percentage)
-              : null,
-            discount_amount: values.discount_amount
-              ? parseFloat(values.discount_amount)
-              : null,
-            final_price: finalPrice,
             sale_date: values.sale_date.toISOString().split("T")[0],
+            location_id: parseInt(values.location_id),
+            bill_discount_percentage: values.bill_discount_percentage
+              ? parseFloat(values.bill_discount_percentage)
+              : null,
+            bill_discount_amount: values.bill_discount_amount
+              ? parseFloat(values.bill_discount_amount)
+              : null,
+            total_amount: totalAmount,
+            final_amount: finalAmount,
             notes: values.notes,
           })
-          .select(
-            `
-            *,
-            product:products!inner(*)
-          `
-          )
+          .select()
           .single();
 
         if (saleError) {
@@ -281,53 +433,144 @@ export default function SalesPage() {
           throw new Error("Failed to create sale record");
         }
 
-        // Update product quantity
-        const { error: updateError } = await supabase.rpc(
-          "update_product_quantity",
-          {
-            p_id: parseInt(values.product_id),
-            qty: -requestedQty,
+        // Record each item
+        for (const item of values.items) {
+          const product = products?.find(
+            (p) => p.id === parseInt(item.product_id)
+          );
+          if (!product) {
+            throw new Error(`Product not found: ${item.product_id}`);
           }
-        );
 
-        if (updateError) {
-          console.error("Product quantity update error:", updateError);
-          throw new Error(updateError.message);
+          const requestedQty = parseInt(item.quantity);
+          const locationStock = stockByLocation?.[
+            parseInt(values.location_id)
+          ]?.find((p: Product) => p.id === parseInt(item.product_id));
+
+          if (!locationStock || requestedQty > locationStock.quantity) {
+            throw new Error(
+              `Insufficient stock for ${
+                product.name
+              } at selected location. Only ${
+                locationStock?.quantity || 0
+              } units available.`
+            );
+          }
+
+          const { totalPrice, finalPrice } = calculateItemFinalPrice(
+            requestedQty,
+            parseFloat(item.price_per_unit),
+            item.trade_scheme,
+            item.discount_percentage,
+            item.discount_amount
+          );
+
+          // Record the sale item
+          const { error: itemError } = await supabase
+            .from("sale_items")
+            .insert({
+              sale_id: saleData.id,
+              product_id: parseInt(item.product_id),
+              quantity: requestedQty,
+              price_per_unit: parseFloat(item.price_per_unit),
+              trade_scheme: item.trade_scheme || null,
+              discount_percentage: item.discount_percentage
+                ? parseFloat(item.discount_percentage)
+                : null,
+              discount_amount: item.discount_amount
+                ? parseFloat(item.discount_amount)
+                : null,
+              total_price: totalPrice,
+              final_price: finalPrice,
+            });
+
+          if (itemError) {
+            console.error("Sale item recording error:", itemError);
+            throw new Error(itemError.message);
+          }
+
+          // Update product quantity at the specific location
+          const { error: updateError } = await supabase.rpc(
+            "update_location_quantity",
+            {
+              p_product_id: parseInt(item.product_id),
+              p_location_id: parseInt(values.location_id),
+              p_quantity: -requestedQty,
+            }
+          );
+
+          if (updateError) {
+            console.error("Product quantity update error:", updateError);
+            throw new Error(updateError.message);
+          }
         }
 
-        return saleData;
+        // Fetch the complete sale with items for receipt
+        const { data: completeSale, error: fetchError } = await supabase
+          .from("sales")
+          .select(
+            `
+            *,
+            items:sale_items(
+              *,
+              product:products(*)
+            )
+          `
+          )
+          .eq("id", saleData.id)
+          .single();
+
+        if (fetchError) {
+          console.error("Error fetching complete sale:", fetchError);
+          throw new Error(fetchError.message);
+        }
+
+        return completeSale;
       } catch (error) {
-        console.error("Sale recording failed:", error);
-        if (error instanceof Error) {
-          throw new Error(`Sale failed: ${error.message}`);
-        }
-        throw new Error(
-          "An unexpected error occurred while recording the sale"
-        );
+        console.error("Transaction error:", error);
+        throw error;
       }
     },
     onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["sales"] });
       toast({
         title: "Sale Recorded",
-        description: "The sale has been successfully recorded.",
+        description: `Invoice #${data.invoice_number} has been created.`,
       });
-      form.reset();
-      queryClient.invalidateQueries({ queryKey: ["sales"] });
-      queryClient.invalidateQueries({ queryKey: ["products"] });
-
-      // Print receipt
       printReceipt(data);
     },
     onError: (error) => {
-      console.error("Sale mutation error:", error);
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const deleteSale = useMutation({
+    mutationFn: async (id: number) => {
+      const { error } = await supabase.rpc("reverse_sale", {
+        sale_id: id,
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast({
+        title: "Sale Reversed",
+        description: "The sale record has been successfully reversed.",
+      });
+      queryClient.invalidateQueries({ queryKey: ["sales"] });
+      queryClient.invalidateQueries({ queryKey: ["products"] });
+    },
+    onError: (error: Error) => {
       toast({
         title: "Error",
         description:
-          error instanceof Error
-            ? error.message
-            : "Failed to record sale. Please try again.",
+          error.message || "Failed to reverse sale. Please try again.",
         variant: "destructive",
       });
+      console.error("Sale deletion error:", error);
     },
   });
 
@@ -344,8 +587,13 @@ export default function SalesPage() {
           </div>
           <div style="text-align: right;">
             <h2 style="font-size: 24px; margin: 0; color: #333;">INVOICE</h2>
-            <p style="color: #666; margin: 5px 0;">Invoice #: INV-${saleData.id.toString().padStart(6, "0")}</p>
-            <p style="color: #666; margin: 5px 0;">Date: ${format(new Date(saleData.sale_date), "PPP")}</p>
+            <p style="color: #666; margin: 5px 0;">Invoice #: ${
+              saleData.invoice_number
+            }</p>
+            <p style="color: #666; margin: 5px 0;">Date: ${format(
+              new Date(saleData.sale_date),
+              "PPP"
+            )}</p>
           </div>
         </div>
 
@@ -354,7 +602,11 @@ export default function SalesPage() {
           <div style="background-color: #f5f5f5; padding: 15px; border-radius: 4px;">
             <h3 style="margin: 0 0 10px 0; color: #333;">Bill To:</h3>
             <p style="margin: 0; color: #666;">${saleData.buyer_name}</p>
-            ${saleData.contact_no ? `<p style="margin: 5px 0; color: #666;">Contact: ${saleData.contact_no}</p>` : ""}
+            ${
+              saleData.contact_no
+                ? `<p style="margin: 5px 0; color: #666;">Contact: ${saleData.contact_no}</p>`
+                : ""
+            }
           </div>
         </div>
 
@@ -370,13 +622,70 @@ export default function SalesPage() {
             </tr>
           </thead>
           <tbody>
-            <tr style="border-bottom: 1px solid #eee;">
-              <td style="padding: 12px;">1</td>
-              <td style="padding: 12px;">${saleData.product.name}</td>
-              <td style="padding: 12px; text-align: right;">${saleData.quantity}</td>
-              <td style="padding: 12px; text-align: right;">$${saleData.price_per_unit.toFixed(2)}</td>
-              <td style="padding: 12px; text-align: right;">$${saleData.total_price.toFixed(2)}</td>
-            </tr>
+            ${saleData.items
+              .map(
+                (item, index) => `
+              <tr style="border-bottom: 1px solid #eee;">
+                <td style="padding: 12px;">${index + 1}</td>
+                <td style="padding: 12px;">${item.product.name}</td>
+                <td style="padding: 12px; text-align: right;">${
+                  item.quantity
+                }</td>
+                <td style="padding: 12px; text-align: right;">$${item.price_per_unit.toFixed(
+                  2
+                )}</td>
+                <td style="padding: 12px; text-align: right;">$${item.total_price.toFixed(
+                  2
+                )}</td>
+              </tr>
+              ${
+                item.trade_scheme
+                  ? `
+              <tr style="border-bottom: 1px solid #eee;">
+                <td style="padding: 12px;"></td>
+                <td style="padding: 12px; color: #666;" colspan="4">
+                  Trade Scheme (${item.trade_scheme}): -$${(
+                      calculateTradeSchemeDiscount(
+                        item.quantity,
+                        item.trade_scheme
+                      ) * item.price_per_unit
+                    ).toFixed(2)}
+                </td>
+              </tr>
+              `
+                  : ""
+              }
+              ${
+                item.discount_amount
+                  ? `
+              <tr style="border-bottom: 1px solid #eee;">
+                <td style="padding: 12px;"></td>
+                <td style="padding: 12px; color: #666;" colspan="4">
+                  Discount Amount: -$${item.discount_amount.toFixed(2)}
+                </td>
+              </tr>
+              `
+                  : ""
+              }
+              ${
+                item.discount_percentage
+                  ? `
+              <tr style="border-bottom: 1px solid #eee;">
+                <td style="padding: 12px;"></td>
+                <td style="padding: 12px; color: #666;" colspan="4">
+                  Discount (${item.discount_percentage}%): -$${(
+                      item.total_price -
+                      item.final_price -
+                      (item.discount_amount || 0)
+                    ).toFixed(2)}
+                </td>
+              </tr>
+              `
+                  : ""
+              }
+            `
+              )
+              .join("")}
           </tbody>
         </table>
 
@@ -384,31 +693,36 @@ export default function SalesPage() {
         <div style="margin-left: auto; width: 300px;">
           <div style="display: flex; justify-content: space-between; padding: 8px 0; color: #666;">
             <span>Subtotal:</span>
-            <span>$${saleData.total_price.toFixed(2)}</span>
+            <span>$${saleData.total_amount.toFixed(2)}</span>
           </div>
           ${
-            saleData.discount_amount
+            saleData.bill_discount_amount
               ? `
           <div style="display: flex; justify-content: space-between; padding: 8px 0; color: #666;">
-            <span>Discount Amount:</span>
-            <span>-$${saleData.discount_amount.toFixed(2)}</span>
+            <span>Bill Discount Amount:</span>
+            <span>-$${saleData.bill_discount_amount.toFixed(2)}</span>
           </div>
           `
               : ""
           }
           ${
-            saleData.discount_percentage
+            saleData.bill_discount_percentage
               ? `
           <div style="display: flex; justify-content: space-between; padding: 8px 0; color: #666;">
-            <span>Discount (${saleData.discount_percentage}%):</span>
-            <span>-$${(saleData.total_price - saleData.final_price - (saleData.discount_amount || 0)).toFixed(2)}</span>
+            <span>Bill Discount (${saleData.bill_discount_percentage}%):</span>
+            <span>-$${(
+              (parseFloat(formValues.bill_discount_percentage ?? "0") / 100) *
+              (totalAmount - parseFloat(formValues.bill_discount_amount ?? "0"))
+            ).toFixed(2)}</span>
           </div>
           `
               : ""
           }
           <div style="display: flex; justify-content: space-between; padding: 12px 0; border-top: 2px solid #2E7D32; margin-top: 8px;">
             <span style="font-weight: bold; color: #333;">Total Due:</span>
-            <span style="font-weight: bold; color: #2E7D32;">$${saleData.final_price.toFixed(2)}</span>
+            <span style="font-weight: bold; color: #2E7D32;">$${saleData.final_amount.toFixed(
+              2
+            )}</span>
           </div>
         </div>
 
@@ -437,7 +751,7 @@ export default function SalesPage() {
       printWindow.document.write(`
         <html>
           <head>
-            <title>Invoice #INV-${saleData.id.toString().padStart(6, "0")}</title>
+            <title>Invoice #${saleData.invoice_number}</title>
           </head>
           <body>
             ${receiptContent}
@@ -449,244 +763,139 @@ export default function SalesPage() {
     }
   }
 
+  // Add reset handler
+  const handleReset = () => {
+    form.reset({
+      buyer_name: "",
+      contact_no: "",
+      sale_date: new Date(),
+      location_id: "",
+      notes: "",
+      bill_discount_percentage: "",
+      bill_discount_amount: "",
+      items: [
+        {
+          product_id: "",
+          quantity: "",
+          price_per_unit: "",
+          trade_scheme: "",
+          discount_percentage: "",
+          discount_amount: "",
+        },
+      ],
+    });
+  };
+
   function onSubmit(values: z.infer<typeof formSchema>) {
     recordSale.mutate(values);
   }
 
-  if (isLoading || productsLoading) {
+  if (isLoading || productsLoading || locationsLoading) {
     return <SalesSkeleton />;
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold text-primary">Record Sale</h1>
-        <p className="text-muted-foreground">
-          Record new sales and view recent transactions
-        </p>
-      </div>
-
-      <div className="grid gap-6 md:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>New Sale</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <Form {...form}>
-              <form
-                onSubmit={form.handleSubmit(onSubmit)}
-                className="space-y-8"
-              >
-                <FormField
-                  control={form.control}
-                  name="product_id"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Product</FormLabel>
-                      <Select
-                        onValueChange={field.onChange}
-                        defaultValue={field.value}
-                      >
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select a product" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <div className="px-2 py-1.5 text-sm font-medium text-muted-foreground">
-                            Ready Products
-                          </div>
-                          {readyProducts.map((product) => (
-                            <SelectItem
-                              key={product.id}
-                              value={product.id.toString()}
-                            >
-                              {product.name}
-                            </SelectItem>
-                          ))}
-
-                          <Collapsible>
-                            <CollapsibleTrigger className="flex items-center w-full px-2 py-1.5 text-sm border-t">
-                              <ChevronRight className="h-4 w-4 mr-1" />
-                              Show All Products
-                            </CollapsibleTrigger>
-                            <CollapsibleContent>
-                              <div className="px-2 py-1.5 text-sm font-medium text-muted-foreground">
-                                Other Products
-                              </div>
-                              {otherProducts.map((product) => (
-                                <SelectItem
-                                  key={product.id}
-                                  value={product.id.toString()}
-                                >
-                                  {product.name}
-                                </SelectItem>
-                              ))}
-                            </CollapsibleContent>
-                          </Collapsible>
-                        </SelectContent>
-                      </Select>
-                      {selectedProductQty !== null && (
-                        <p className="text-sm text-muted-foreground mt-1">
-                          Available Quantity: {selectedProductQty}
-                        </p>
-                      )}
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name="buyer_name"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Buyer Name</FormLabel>
+    <div className="container mx-auto py-10">
+      <Form {...form}>
+        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-4">
+              <FormField
+                control={form.control}
+                name="location_id"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Sale Location</FormLabel>
+                    <Select
+                      onValueChange={field.onChange}
+                      defaultValue={field.value}
+                    >
                       <FormControl>
-                        <Input placeholder="Enter buyer name" {...field} />
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select location" />
+                        </SelectTrigger>
                       </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                      <SelectContent>
+                        {locations?.map((location) => (
+                          <SelectItem
+                            key={location.id}
+                            value={location.id.toString()}
+                          >
+                            {location.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
 
-                <FormField
-                  control={form.control}
-                  name="contact_no"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Contact Number (Optional)</FormLabel>
-                      <FormControl>
-                        <Input placeholder="Enter contact number" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+              <FormField
+                control={form.control}
+                name="buyer_name"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Buyer Name</FormLabel>
+                    <FormControl>
+                      <Input placeholder="Enter buyer name" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
 
-                <div className="grid grid-cols-2 gap-4">
-                  <FormField
-                    control={form.control}
-                    name="quantity"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Quantity</FormLabel>
-                        <FormControl>
-                          <Input
-                            type="number"
-                            placeholder="Enter quantity"
-                            {...field}
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+              <FormField
+                control={form.control}
+                name="contact_no"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Contact Number</FormLabel>
+                    <FormControl>
+                      <Input placeholder="Enter contact number" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
 
-                  <FormField
-                    control={form.control}
-                    name="price_per_unit"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Price per Unit</FormLabel>
-                        <FormControl>
-                          <Input
-                            type="number"
-                            step="0.01"
-                            placeholder="Enter price"
-                            {...field}
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </div>
-
-                <Card className="bg-secondary/10">
-                  <CardContent className="pt-4">
-                    <div className="text-sm font-medium mb-2">
-                      Price Calculation
-                    </div>
-                    <div className="space-y-1">
-                      <div className="flex justify-between">
-                        <span>Subtotal:</span>
-                        <span>${totalPrice.toFixed(2)}</span>
-                      </div>
-                      <div className="grid grid-cols-2 gap-4">
-                        <FormField
-                          control={form.control}
-                          name="discount_percentage"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormControl>
-                                <Input
-                                  type="number"
-                                  step="0.01"
-                                  placeholder="Discount %"
-                                  {...field}
-                                />
-                              </FormControl>
-                            </FormItem>
-                          )}
-                        />
-                        <FormField
-                          control={form.control}
-                          name="discount_amount"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormControl>
-                                <Input
-                                  type="number"
-                                  step="0.01"
-                                  placeholder="Discount $"
-                                  {...field}
-                                />
-                              </FormControl>
-                            </FormItem>
-                          )}
-                        />
-                      </div>
-                      <div className="flex justify-between font-bold pt-2 border-t">
-                        <span>Final Price:</span>
-                        <div className="text-right">
-                          <div>${finalPrice.toFixed(2)}</div>
-                          {pricePerPieceAfterDiscount > 0 && (
-                            <div className="text-sm text-muted-foreground">
-                              @${pricePerPieceAfterDiscount.toFixed(2)} per
-                              piece
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <FormField
-                  control={form.control}
-                  name="sale_date"
-                  render={({ field }) => (
-                    <FormItem className="flex flex-col">
-                      <FormLabel>Date</FormLabel>
+              <FormField
+                control={form.control}
+                name="sale_date"
+                render={({ field }) => (
+                  <FormItem className="flex flex-col">
+                    <FormLabel>Sale Date</FormLabel>
+                    <div className="flex gap-2">
+                      <Input
+                        type="date"
+                        value={
+                          field.value
+                            ? field.value.toISOString().split("T")[0]
+                            : ""
+                        }
+                        onChange={(e) => {
+                          const date = e.target.value
+                            ? new Date(e.target.value)
+                            : new Date();
+                          field.onChange(date);
+                        }}
+                      />
                       <Popover>
                         <PopoverTrigger asChild>
-                          <FormControl>
-                            <Button
-                              variant={"outline"}
-                              className={cn(
-                                "w-[240px] pl-3 text-left font-normal",
-                                !field.value && "text-muted-foreground"
-                              )}
-                            >
-                              {field.value ? (
-                                format(field.value, "PPP")
-                              ) : (
-                                <span>Pick a date</span>
-                              )}
-                              <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
-                            </Button>
-                          </FormControl>
+                          <Button
+                            variant={"outline"}
+                            className={cn(
+                              "w-[280px]",
+                              !field.value && "text-muted-foreground"
+                            )}
+                          >
+                            <CalendarIcon className="mr-2 h-4 w-4" />
+                            {field.value ? (
+                              format(field.value, "PPP")
+                            ) : (
+                              <span>Pick a date</span>
+                            )}
+                          </Button>
                         </PopoverTrigger>
                         <PopoverContent className="w-auto p-0" align="start">
                           <Calendar
@@ -694,88 +903,509 @@ export default function SalesPage() {
                             selected={field.value}
                             onSelect={field.onChange}
                             disabled={(date) =>
-                              date > new Date() || date < new Date("2023-01-01")
+                              date > new Date() || date < new Date("1900-01-01")
                             }
                             initialFocus
                           />
                         </PopoverContent>
                       </Popover>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name="notes"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Notes (Optional)</FormLabel>
-                      <FormControl>
-                        <Input
-                          placeholder="Add any notes about the sale"
-                          {...field}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <Button
-                  type="submit"
-                  className="w-full"
-                  disabled={recordSale.isPending}
-                >
-                  {recordSale.isPending ? "Recording..." : "Record Sale"}
-                </Button>
-              </form>
-            </Form>
-          </CardContent>
-        </Card>
-
-        <div className="space-y-4">
-          <h2 className="text-xl font-semibold text-primary">Recent Sales</h2>
-          {recentSales?.map((sale) => (
-            <Card key={sale.id}>
-              <CardContent className="flex items-center gap-4 py-4">
-                <Badge className="bg-green-500">
-                  <ArrowDown className="h-4 w-4 mr-1" />
-                  Sale
-                </Badge>
-                <div className="flex-1">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <p className="font-medium">
-                        {sale.product?.name || "Unknown Product"}
-                      </p>
-                      <p className="text-sm">{sale.buyer_name}</p>
-                      <p className="text-sm text-muted-foreground">
-                        {format(new Date(sale.sale_date), "PPP")}
-                      </p>
                     </div>
-                    <div className="text-right">
-                      <Badge variant="outline">{sale.quantity} units</Badge>
-                      <p className="text-sm font-medium mt-1">
-                        ${sale.final_price.toFixed(2)}
-                      </p>
-                      {(sale.discount_percentage || sale.discount_amount) && (
-                        <p className="text-xs text-muted-foreground">
-                          Discounted from ${sale.total_price.toFixed(2)}
-                        </p>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+
+            <div className="space-y-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Items</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {formValues.items.map((_, index) => (
+                    <div key={index} className="space-y-4 mb-6">
+                      <div className="flex justify-between items-center">
+                        <h4 className="text-sm font-medium">
+                          Item {index + 1}
+                        </h4>
+                        {index > 0 && (
+                          <Button
+                            type="button"
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => {
+                              const currentItems = form.getValues("items");
+                              form.setValue(
+                                "items",
+                                currentItems.filter((_, i) => i !== index)
+                              );
+                            }}
+                          >
+                            Remove
+                          </Button>
+                        )}
+                      </div>
+
+                      <FormField
+                        control={form.control}
+                        name={`items.${index}.product_id`}
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Product</FormLabel>
+                            <Select
+                              onValueChange={field.onChange}
+                              defaultValue={field.value}
+                            >
+                              <FormControl>
+                                <SelectTrigger>
+                                  <SelectValue placeholder="Select a product" />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
+                                {products?.map((product) => (
+                                  <SelectItem
+                                    key={product.id}
+                                    value={product.id.toString()}
+                                  >
+                                    {product.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            {field.value && (
+                              <div className="mt-2 grid grid-cols-4 gap-2">
+                                {locations?.map((location) => {
+                                  const stock = stockByLocation?.[
+                                    location.id
+                                  ]?.find(
+                                    (p) => p.id === parseInt(field.value)
+                                  );
+                                  return (
+                                    <div
+                                      key={location.id}
+                                      className={cn(
+                                        "flex flex-col items-center p-2 rounded-lg border text-sm",
+                                        location.id.toString() ===
+                                          form.getValues("location_id")
+                                          ? "bg-primary text-primary-foreground"
+                                          : "bg-background"
+                                      )}
+                                    >
+                                      <span className="font-medium">
+                                        {location.name}
+                                      </span>
+                                      <span>{stock?.quantity || 0}</span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <FormField
+                          control={form.control}
+                          name={`items.${index}.quantity`}
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Quantity</FormLabel>
+                              <FormControl>
+                                <Input
+                                  type="number"
+                                  placeholder="Enter quantity"
+                                  {...field}
+                                />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={form.control}
+                          name={`items.${index}.price_per_unit`}
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Price per Unit</FormLabel>
+                              <FormControl>
+                                <Input
+                                  type="number"
+                                  step="0.01"
+                                  placeholder="Enter price"
+                                  {...field}
+                                />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+
+                      <Collapsible open={isOpen} onOpenChange={setIsOpen}>
+                        <CollapsibleTrigger className="flex items-center text-sm text-muted-foreground hover:text-foreground">
+                          {isOpen ? (
+                            <ChevronDown className="h-4 w-4 mr-1" />
+                          ) : (
+                            <ChevronRight className="h-4 w-4 mr-1" />
+                          )}
+                          Discounts
+                        </CollapsibleTrigger>
+                        <CollapsibleContent className="space-y-4 mt-4">
+                          <FormField
+                            control={form.control}
+                            name={`items.${index}.trade_scheme`}
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormControl>
+                                  <Input
+                                    placeholder="Trade Scheme (e.g., 12+2)"
+                                    {...field}
+                                  />
+                                </FormControl>
+                                <FormDescription className="text-xs">
+                                  Enter in format: buy+free (e.g., 12+2)
+                                </FormDescription>
+                              </FormItem>
+                            )}
+                          />
+
+                          <div className="grid grid-cols-2 gap-4">
+                            <FormField
+                              control={form.control}
+                              name={`items.${index}.discount_percentage`}
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormControl>
+                                    <Input
+                                      type="number"
+                                      step="0.01"
+                                      placeholder="Discount %"
+                                      {...field}
+                                    />
+                                  </FormControl>
+                                </FormItem>
+                              )}
+                            />
+
+                            <FormField
+                              control={form.control}
+                              name={`items.${index}.discount_amount`}
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormControl>
+                                    <Input
+                                      type="number"
+                                      step="0.01"
+                                      placeholder="Discount $"
+                                      {...field}
+                                    />
+                                  </FormControl>
+                                </FormItem>
+                              )}
+                            />
+                          </div>
+                        </CollapsibleContent>
+                      </Collapsible>
+                    </div>
+                  ))}
+
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => {
+                      const currentItems = form.getValues("items");
+                      form.setValue("items", [
+                        ...currentItems,
+                        {
+                          product_id: "",
+                          quantity: "",
+                          price_per_unit: "",
+                          trade_scheme: "",
+                          discount_percentage: "",
+                          discount_amount: "",
+                        },
+                      ]);
+                    }}
+                  >
+                    Add Item
+                  </Button>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Bill Discounts</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-2 gap-4">
+                    <FormField
+                      control={form.control}
+                      name="bill_discount_percentage"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Bill Discount %</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="number"
+                              step="0.01"
+                              placeholder="Discount %"
+                              {...field}
+                            />
+                          </FormControl>
+                        </FormItem>
                       )}
+                    />
+
+                    <FormField
+                      control={form.control}
+                      name="bill_discount_amount"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Bill Discount $</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="number"
+                              step="0.01"
+                              placeholder="Discount $"
+                              {...field}
+                            />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardContent className="pt-4">
+                  <div className="space-y-1">
+                    <div className="flex justify-between">
+                      <span>Subtotal:</span>
+                      <span>${totalAmount.toFixed(2)}</span>
+                    </div>
+                    {formValues.bill_discount_amount &&
+                      parseFloat(formValues.bill_discount_amount) > 0 && (
+                        <div className="flex justify-between text-muted-foreground">
+                          <span>Bill Discount Amount:</span>
+                          <span>
+                            -$
+                            {parseFloat(
+                              formValues.bill_discount_amount
+                            ).toFixed(2)}
+                          </span>
+                        </div>
+                      )}
+                    {formValues.bill_discount_percentage &&
+                      parseFloat(formValues.bill_discount_percentage) > 0 && (
+                        <div className="flex justify-between text-muted-foreground">
+                          <span>
+                            Bill Discount ({formValues.bill_discount_percentage}
+                            %):
+                          </span>
+                          <span>
+                            -$
+                            {(
+                              (parseFloat(
+                                formValues.bill_discount_percentage ?? "0"
+                              ) /
+                                100) *
+                              (totalAmount -
+                                parseFloat(
+                                  formValues.bill_discount_amount ?? "0"
+                                ))
+                            ).toFixed(2)}
+                          </span>
+                        </div>
+                      )}
+                    <div className="flex justify-between font-medium pt-2 border-t">
+                      <span>Total:</span>
+                      <span>${finalAmount.toFixed(2)}</span>
                     </div>
                   </div>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
+
+          <FormField
+            control={form.control}
+            name="notes"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Notes</FormLabel>
+                <FormControl>
+                  <Input placeholder="Add any notes here" {...field} />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          <div className="flex gap-4">
+            <Button
+              type="submit"
+              className="flex-1"
+              disabled={recordSale.isPending}
+            >
+              {recordSale.isPending ? "Recording..." : "Record Sale"}
+            </Button>
+            <Button type="button" variant="outline" onClick={handleReset}>
+              Reset Form
+            </Button>
+          </div>
+        </form>
+      </Form>
+
+      {/* Recent Sales with Receipts */}
+      <div className="mt-8">
+        <h2 className="text-2xl font-bold mb-4">Recent Sales</h2>
+        <div className="space-y-4">
+          {recentSales?.map((sale) => (
+            <Card key={sale.id}>
+              <CardContent className="flex items-center justify-between py-4">
+                <div className="flex items-center gap-4">
+                  <Badge className="bg-green-500">
+                    <ShoppingCart className="h-4 w-4 mr-1" />
+                    Sale
+                  </Badge>
+                  <div>
+                    <p className="font-medium">
+                      Invoice #{sale.invoice_number}
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      {format(new Date(sale.sale_date), "PPP")}
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      {sale.buyer_name}
+                      {sale.contact_no && ` • ${sale.contact_no}`}
+                    </p>
+                  </div>
                 </div>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => printReceipt(sale)}
-                  title="Print Receipt"
-                >
-                  <Printer className="h-4 w-4" />
-                </Button>
+                <div className="flex items-center gap-4">
+                  <div className="text-right">
+                    <p className="font-medium">
+                      ${sale.final_amount.toFixed(2)}
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      {sale.items.length} items
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      onClick={() => printReceipt(sale)}
+                    >
+                      <Printer className="h-4 w-4" />
+                    </Button>
+                    <DeleteButton
+                      onDelete={() => deleteSale.mutate(sale.id)}
+                      loading={deleteSale.isPending}
+                      title="Reverse Sale"
+                      description="This will reverse the sale and restore the product quantities. This action cannot be undone."
+                    />
+                  </div>
+                </div>
               </CardContent>
+              <Collapsible>
+                <CollapsibleTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    className="w-full flex justify-between items-center p-4 hover:bg-secondary/10"
+                  >
+                    View Items
+                    <ChevronDown className="h-4 w-4" />
+                  </Button>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <div className="px-4 pb-4">
+                    <div className="space-y-2">
+                      {sale.items.map((item) => (
+                        <div
+                          key={item.id}
+                          className="flex justify-between items-center py-2 border-t first:border-t-0"
+                        >
+                          <div>
+                            <p className="font-medium">{item.product.name}</p>
+                            <p className="text-sm text-muted-foreground">
+                              {item.quantity} × $
+                              {item.price_per_unit.toFixed(2)}
+                            </p>
+                            {item.trade_scheme && (
+                              <p className="text-sm text-muted-foreground">
+                                Trade Scheme: {item.trade_scheme}
+                              </p>
+                            )}
+                          </div>
+                          <div className="text-right">
+                            <p className="font-medium">
+                              ${item.final_price.toFixed(2)}
+                            </p>
+                            {(item.discount_percentage ||
+                              item.discount_amount) && (
+                              <p className="text-sm text-muted-foreground">
+                                {item.discount_percentage &&
+                                  `${item.discount_percentage}% `}
+                                {item.discount_amount &&
+                                  `$${item.discount_amount} `}
+                                off
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    {(sale.bill_discount_percentage ||
+                      sale.bill_discount_amount) && (
+                      <div className="mt-4 pt-4 border-t">
+                        <div className="flex justify-between text-sm text-muted-foreground">
+                          <span>Subtotal:</span>
+                          <span>${sale.total_amount.toFixed(2)}</span>
+                        </div>
+                        {sale.bill_discount_amount && (
+                          <div className="flex justify-between text-sm text-muted-foreground">
+                            <span>Bill Discount:</span>
+                            <span>
+                              -${sale.bill_discount_amount.toFixed(2)}
+                            </span>
+                          </div>
+                        )}
+                        {sale.bill_discount_percentage && (
+                          <div className="flex justify-between text-sm text-muted-foreground">
+                            <span>
+                              Bill Discount ({sale.bill_discount_percentage}%):
+                            </span>
+                            <span>
+                              -$
+                              {(
+                                (sale.bill_discount_percentage / 100) *
+                                (sale.total_amount -
+                                  (sale.bill_discount_amount || 0))
+                              ).toFixed(2)}
+                            </span>
+                          </div>
+                        )}
+                        <div className="flex justify-between font-medium mt-2">
+                          <span>Total:</span>
+                          <span>${sale.final_amount.toFixed(2)}</span>
+                        </div>
+                      </div>
+                    )}
+                    {sale.notes && (
+                      <div className="mt-4 pt-4 border-t">
+                        <p className="text-sm text-muted-foreground">
+                          Note: {sale.notes}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
             </Card>
           ))}
         </div>

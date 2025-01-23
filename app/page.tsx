@@ -11,17 +11,38 @@ import {
   Activity,
   AlertTriangle,
   RefreshCw,
+  MapPin,
+  ChevronDown,
 } from "lucide-react";
 import { Charts } from "@/components/Charts";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useDashboardQuery } from "@/hooks/use-dashboard-query";
+import {
+  Collapsible,
+  CollapsibleTrigger,
+  CollapsibleContent,
+} from "@/components/ui/collapsible";
+
+interface Product {
+  id: number;
+  name: string;
+  quantity: number;
+}
 
 export default function Dashboard() {
-  const { products, salesData, productsLoading, salesLoading } = useDashboardQuery();
+  const {
+    products,
+    salesData,
+    locations,
+    stockByLocation,
+    productsLoading,
+    salesLoading,
+    locationsLoading,
+  } = useDashboardQuery();
 
-  if (productsLoading || salesLoading) {
+  if (productsLoading || salesLoading || locationsLoading) {
     return <DashboardSkeleton />;
   }
 
@@ -31,18 +52,24 @@ export default function Dashboard() {
       soap: products?.find((p) => p.name === "Soap (Ready)")?.quantity || 0,
       powder: products?.find((p) => p.name === "Powder")?.quantity || 0,
       lotion: products?.find((p) => p.name === "Lotion (Ready)")?.quantity || 0,
-      shampoo: products?.find((p) => p.name === "Shampoo (Ready)")?.quantity || 0,
+      shampoo:
+        products?.find((p) => p.name === "Shampoo (Ready)")?.quantity || 0,
     },
     unfinishedProducts: {
       soap: {
-        wrapped: products?.find((p) => p.name === "Soap (Wrapped)")?.quantity || 0,
-        emptyBoxes: products?.find((p) => p.name === "Soap Boxes")?.quantity || 0,
+        wrapped:
+          products?.find((p) => p.name === "Soap (Wrapped)")?.quantity || 0,
+        emptyBoxes:
+          products?.find((p) => p.name === "Soap Boxes")?.quantity || 0,
       },
       lotion: {
-        filledUnlabeled: products?.find((p) => p.name === "Lotion (Unlabeled)")?.quantity || 0,
+        filledUnlabeled:
+          products?.find((p) => p.name === "Lotion (Unlabeled)")?.quantity || 0,
       },
       shampoo: {
-        filledUnlabeled: products?.find((p) => p.name === "Shampoo (Unlabeled)")?.quantity || 0,
+        filledUnlabeled:
+          products?.find((p) => p.name === "Shampoo (Unlabeled)")?.quantity ||
+          0,
       },
     },
   };
@@ -72,8 +99,11 @@ export default function Dashboard() {
   }).reverse();
 
   const salesChartData = last7Days.map((date) => ({
-    date: new Date(date).toLocaleDateString('en-US', { weekday: 'short' }),
-    sales: salesData?.filter((s) => s.sale_date === date).reduce((sum, s) => sum + s.price, 0) || 0,
+    date: new Date(date).toLocaleDateString("en-US", { weekday: "short" }),
+    sales:
+      salesData
+        ?.filter((s) => s.sale_date === date)
+        .reduce((sum, s) => sum + s.price, 0) || 0,
   }));
 
   return (
@@ -107,7 +137,10 @@ export default function Dashboard() {
           <CardContent>
             <div className="text-2xl font-bold">{potentialGiftSets}</div>
             <p className="text-xs text-purple-200">Can be assembled</p>
-            <Progress className="mt-2" value={(potentialGiftSets / 1000) * 100} />
+            <Progress
+              className="mt-2"
+              value={(potentialGiftSets / 1000) * 100}
+            />
           </CardContent>
         </Card>
 
@@ -118,12 +151,112 @@ export default function Dashboard() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">${totalSales.toFixed(2)}</div>
-            <p className="text-xs text-green-200">{todaySales.length} transactions</p>
+            <p className="text-xs text-green-200">
+              {todaySales.length} transactions
+            </p>
           </CardContent>
         </Card>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
+        {/* Stock by Location */}
+        <Card className="col-span-2">
+          <CardHeader>
+            <CardTitle className="text-lg font-semibold text-primary">
+              Stock by Location
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-4">
+              {locations?.map((location) => {
+                const locationProducts = stockByLocation?.[location.id] || [];
+                const giftSets = locationProducts.filter(
+                  (p: Product) => p.name === "Gift Set"
+                );
+                const otherProducts = locationProducts.filter(
+                  (p: Product) => p.name !== "Gift Set"
+                );
+                const totalItems = locationProducts.reduce(
+                  (sum: number, p: Product) => sum + p.quantity,
+                  0
+                );
+
+                return (
+                  <Card key={location.id}>
+                    <CardHeader className="py-4">
+                      <div className="flex items-center justify-between">
+                        <CardTitle className="text-sm font-medium flex items-center gap-2">
+                          <MapPin className="h-4 w-4" />
+                          {location.name}
+                        </CardTitle>
+                        <span className="text-sm text-muted-foreground">
+                          {totalItems} total items
+                        </span>
+                      </div>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-4">
+                        {/* Gift Sets */}
+                        {giftSets.map((product: Product) => (
+                          <div
+                            key={product.id}
+                            className="flex items-center space-x-2 bg-secondary/10 p-3 rounded-lg"
+                          >
+                            <Gift className="h-5 w-5 text-secondary" />
+                            <div>
+                              <p className="text-sm font-medium">
+                                {product.name}
+                              </p>
+                              <p className="text-xl font-bold text-primary">
+                                {product.quantity}
+                              </p>
+                            </div>
+                          </div>
+                        ))}
+
+                        {/* Other Products - Collapsible */}
+                        {otherProducts.length > 0 && (
+                          <Collapsible>
+                            <CollapsibleTrigger asChild>
+                              <Button
+                                variant="outline"
+                                className="w-full justify-between"
+                              >
+                                Other Products
+                                <ChevronDown className="h-4 w-4" />
+                              </Button>
+                            </CollapsibleTrigger>
+                            <CollapsibleContent className="mt-4">
+                              <div className="grid grid-cols-2 gap-4">
+                                {otherProducts.map((product: Product) => (
+                                  <div
+                                    key={product.id}
+                                    className="flex items-center space-x-2 bg-secondary/10 p-3 rounded-lg"
+                                  >
+                                    <ShoppingBag className="h-5 w-5 text-secondary" />
+                                    <div>
+                                      <p className="text-sm font-medium">
+                                        {product.name}
+                                      </p>
+                                      <p className="text-xl font-bold text-primary">
+                                        {product.quantity}
+                                      </p>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </CollapsibleContent>
+                          </Collapsible>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+
         <Card className="col-span-2">
           <CardHeader>
             <CardTitle className="text-lg font-semibold text-primary">
@@ -174,35 +307,6 @@ export default function Dashboard() {
                 )
               )}
             </ul>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Recent Activity</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              {last7Days.map((date) => {
-                const salesForDay = salesData?.filter((s) => s.sale_date === date) || [];
-                const totalSales = salesForDay.reduce((sum, s) => sum + s.price, 0);
-
-                return (
-                  <div key={date} className="flex items-center justify-between">
-                    <div className="space-y-1">
-                      <p className="text-sm font-medium">
-                        {new Date(date).toLocaleDateString("en-US", {
-                          weekday: "long",
-                        })}
-                      </p>
-                      <p className="text-sm text-muted-foreground">
-                        Sales: ${totalSales.toFixed(2)}
-                      </p>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
           </CardContent>
         </Card>
 
@@ -306,47 +410,6 @@ function DashboardSkeleton() {
                   >
                     <Skeleton className="h-4 w-24" />
                     <Skeleton className="h-4 w-16" />
-                  </div>
-                ))}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      <div className="grid gap-4 md:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <Skeleton className="h-6 w-32" />
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              {Array(7)
-                .fill(null)
-                .map((_, i) => (
-                  <div key={i} className="flex items-center justify-between">
-                    <div className="space-y-1">
-                      <Skeleton className="h-4 w-32" />
-                      <Skeleton className="h-3 w-24" />
-                    </div>
-                    <Skeleton className="h-4 w-20" />
-                  </div>
-                ))}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <Skeleton className="h-6 w-32" />
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              {Array(3)
-                .fill(null)
-                .map((_, i) => (
-                  <div key={i} className="p-4 border rounded-lg">
-                    <Skeleton className="h-4 w-full mb-2" />
-                    <Skeleton className="h-3 w-3/4" />
                   </div>
                 ))}
             </div>

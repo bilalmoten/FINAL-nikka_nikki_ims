@@ -157,7 +157,6 @@ export default function PurchasesPage() {
         title: "Purchase Recorded",
         description: "The purchase has been successfully recorded.",
       });
-      form.reset();
       queryClient.invalidateQueries({ queryKey: ["purchases"] });
       queryClient.invalidateQueries({ queryKey: ["products"] });
     },
@@ -173,6 +172,16 @@ export default function PurchasesPage() {
       });
     },
   });
+
+  // Add reset handler
+  const handleReset = () => {
+    form.reset({
+      product_id: "",
+      quantity: "",
+      price: "",
+      purchase_date: new Date(),
+    });
+  };
 
   function onSubmit(values: z.infer<typeof formSchema>) {
     recordPurchase.mutate(values);
@@ -276,51 +285,71 @@ export default function PurchasesPage() {
                   render={({ field }) => (
                     <FormItem className="flex flex-col">
                       <FormLabel>Date</FormLabel>
-                      <Popover>
-                        <PopoverTrigger asChild>
-                          <FormControl>
+                      <div className="flex gap-2">
+                        <Input
+                          type="date"
+                          value={
+                            field.value
+                              ? field.value.toISOString().split("T")[0]
+                              : ""
+                          }
+                          onChange={(e) => {
+                            const date = e.target.value
+                              ? new Date(e.target.value)
+                              : new Date();
+                            field.onChange(date);
+                          }}
+                        />
+                        <Popover>
+                          <PopoverTrigger asChild>
                             <Button
                               variant={"outline"}
                               className={cn(
-                                "w-[240px] pl-3 text-left font-normal",
+                                "w-[280px]",
                                 !field.value && "text-muted-foreground"
                               )}
                             >
+                              <CalendarIcon className="mr-2 h-4 w-4" />
                               {field.value ? (
                                 format(field.value, "PPP")
                               ) : (
                                 <span>Pick a date</span>
                               )}
-                              <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
                             </Button>
-                          </FormControl>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-auto p-0" align="start">
-                          <Calendar
-                            mode="single"
-                            selected={field.value}
-                            onSelect={field.onChange}
-                            disabled={(date) =>
-                              date > new Date() || date < new Date("2023-01-01")
-                            }
-                            initialFocus
-                          />
-                        </PopoverContent>
-                      </Popover>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-auto p-0" align="start">
+                            <Calendar
+                              mode="single"
+                              selected={field.value}
+                              onSelect={field.onChange}
+                              disabled={(date) =>
+                                date > new Date() ||
+                                date < new Date("2023-01-01")
+                              }
+                              initialFocus
+                            />
+                          </PopoverContent>
+                        </Popover>
+                      </div>
                       <FormMessage />
                     </FormItem>
                   )}
                 />
 
-                <Button
-                  type="submit"
-                  className="w-full"
-                  disabled={recordPurchase.isPending}
-                >
-                  {recordPurchase.isPending
-                    ? "Recording..."
-                    : "Record Purchase"}
-                </Button>
+                <div className="flex gap-4">
+                  <Button
+                    type="submit"
+                    className="flex-1"
+                    disabled={recordPurchase.isPending}
+                  >
+                    {recordPurchase.isPending
+                      ? "Recording..."
+                      : "Record Purchase"}
+                  </Button>
+                  <Button type="button" variant="outline" onClick={handleReset}>
+                    Reset Form
+                  </Button>
+                </div>
               </form>
             </Form>
           </CardContent>

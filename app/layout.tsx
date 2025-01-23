@@ -4,6 +4,7 @@ import "./globals.css";
 import { Providers } from "./providers";
 import Link from "next/link";
 import { Toaster } from "@/components/ui/toaster";
+import { CartonCalculator } from "@/components/carton-calculator";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -22,9 +23,9 @@ export default function RootLayout({
       <body className={inter.className}>
         <Providers>
           <div className="flex h-screen bg-gray-100">
-            <nav className="w-64 bg-white shadow-md p-6">
+            <nav className="w-64 bg-white shadow-md p-6 flex flex-col">
               <h1 className="text-2xl font-bold mb-6">Nikka Nikki</h1>
-              <ul className="space-y-2">
+              <ul className="space-y-2 mb-6">
                 <li>
                   <Link
                     href="/"
@@ -75,6 +76,14 @@ export default function RootLayout({
                 </li>
                 <li>
                   <Link
+                    href="/transfers"
+                    className="block py-2 px-4 rounded hover:bg-gray-200"
+                  >
+                    Record Transfer
+                  </Link>
+                </li>
+                <li>
+                  <Link
                     href="/wastage"
                     className="block py-2 px-4 rounded hover:bg-gray-200"
                   >
@@ -82,6 +91,9 @@ export default function RootLayout({
                   </Link>
                 </li>
               </ul>
+              <div className="mt-auto">
+                <CartonCalculator />
+              </div>
             </nav>
             <main className="flex-1 p-8 overflow-auto">{children}</main>
           </div>

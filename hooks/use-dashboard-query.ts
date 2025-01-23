@@ -45,10 +45,61 @@ export function useDashboardQuery() {
         staleTime: 1000 * 60 * 5,
     });
 
+    const {
+        data: locations,
+        isLoading: locationsLoading,
+    } = useQuery({
+        queryKey: ["locations"],
+        queryFn: async () => {
+            const { data, error } = await supabase
+                .from("locations")
+                .select("*")
+                .order('name', { ascending: true });
+            if (error) throw error;
+            return data;
+        },
+        staleTime: 1000 * 60 * 5,
+    });
+
+    const {
+        data: locationProducts,
+        isLoading: locationProductsLoading,
+    } = useQuery({
+        queryKey: ["locationProducts"],
+        queryFn: async () => {
+            const { data, error } = await supabase
+                .from("location_products")
+                .select("*");
+            if (error) throw error;
+            return data;
+        },
+        staleTime: 1000 * 60 * 5,
+    });
+
+    // Calculate stock per location using location_products
+    const stockByLocation = locations?.reduce((acc, location) => {
+        acc[location.id] = products?.map(product => {
+            const locationProduct = locationProducts?.find(lp =>
+                lp.location_id === location.id &&
+                lp.product_id === product.id
+            );
+            return {
+                ...product,
+                quantity: locationProduct?.quantity || 0
+            };
+        }) || [];
+        return acc;
+    }, {} as Record<number, typeof products>);
+
     return {
         products,
         productsLoading,
         salesData,
         salesLoading,
+        locations,
+        locationsLoading,
+        locationProducts,
+        locationProductsLoading,
+        stockByLocation
     };
 } 
