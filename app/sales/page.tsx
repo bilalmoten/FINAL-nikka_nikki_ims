@@ -10,6 +10,7 @@ import {
   Printer,
   Calculator,
   ShoppingCart,
+  X,
 } from "lucide-react";
 import { cn, formatGiftSetQuantity } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -42,6 +43,8 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
+  SelectGroup,
+  SelectLabel,
 } from "@/components/ui/select";
 import {
   Collapsible,
@@ -56,6 +59,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { Checkbox } from "@/components/ui/checkbox";
 
 interface Product {
   id: number;
@@ -67,6 +71,7 @@ interface SaleItem {
   id: number;
   sale_id: number;
   product_id: number;
+  location_id: number;
   quantity: number;
   price_per_unit: number;
   trade_scheme?: string;
@@ -75,6 +80,7 @@ interface SaleItem {
   total_price: number;
   final_price: number;
   product: Product;
+  location: Location;
 }
 
 interface Sale {
@@ -92,6 +98,7 @@ interface Sale {
   product?: Product;
   quantity?: number;
   price?: number;
+  credit_sale: boolean;
 }
 
 interface Transfer {
@@ -121,6 +128,9 @@ const saleItemSchema = z.object({
   product_id: z.string({
     required_error: "Please select a product.",
   }),
+  location_id: z.string({
+    required_error: "Please select location.",
+  }),
   quantity: z.string().min(1, "Quantity is required"),
   price_per_unit: z.string().min(1, "Price per unit is required"),
   trade_scheme: z.string().optional(),
@@ -133,15 +143,15 @@ const formSchema = z.object({
   buyer_name: z.string(),
   contact_no: z.string().optional(),
   sale_date: z.date(),
-  location_id: z.string({
-    required_error: "Please select a location.",
-  }),
   notes: z.string().optional(),
   bill_discount_percentage: z.string().optional(),
   bill_discount_amount: z.string().optional(),
+  print_receipt: z.boolean().default(false),
+  credit_sale: z.boolean().default(false),
   items: z.array(
     z.object({
       product_id: z.string(),
+      location_id: z.string(),
       quantity: z.string(),
       price_per_unit: z.string(),
       trade_scheme: z.string().optional(),
@@ -176,6 +186,10 @@ function calculateItemFinalPrice(
   discountPercentage?: string,
   discountAmount?: string
 ): { totalPrice: number; finalPrice: number } {
+  // Ensure we have valid numbers
+  quantity = quantity || 0;
+  pricePerUnit = pricePerUnit || 0;
+
   // Calculate initial total
   const total = quantity * pricePerUnit;
 
@@ -184,18 +198,60 @@ function calculateItemFinalPrice(
   const priceAfterTradeScheme = total - freeItems * pricePerUnit;
 
   // Apply fixed amount discount
-  const discAmt = parseFloat(discountAmount || "0");
+  const discAmt = parseFloat(discountAmount || "0") || 0;
   const priceAfterAmountDiscount = Math.max(0, priceAfterTradeScheme - discAmt);
 
   // Apply percentage discount
-  const discPerc = parseFloat(discountPercentage || "0");
+  const discPerc = parseFloat(discountPercentage || "0") || 0;
   const discountFromPercentage = priceAfterAmountDiscount * (discPerc / 100);
   const finalPrice = Math.max(
     0,
     priceAfterAmountDiscount - discountFromPercentage
   );
 
-  return { totalPrice: total, finalPrice };
+  return {
+    totalPrice: total || 0,
+    finalPrice: finalPrice || 0,
+  };
+}
+
+// Add this helper function near the top of the file
+function calculateLiveItemPrice(
+  quantity: string,
+  pricePerUnit: string,
+  tradeScheme?: string,
+  discountPercentage?: string,
+  discountAmount?: string
+) {
+  if (!quantity || !pricePerUnit)
+    return { perPiece: 0, total: 0, finalTotal: 0 };
+
+  const qty = parseFloat(quantity);
+  const price = parseFloat(pricePerUnit);
+  const total = qty * price;
+
+  // Calculate trade scheme discount
+  const tradeSchemeDiscount = tradeScheme
+    ? calculateTradeSchemeDiscount(qty, tradeScheme) * price
+    : 0;
+  const afterTradeScheme = total - tradeSchemeDiscount;
+
+  // Apply fixed discount
+  const fixedDiscount = parseFloat(discountAmount || "0");
+  const afterFixedDiscount = Math.max(0, afterTradeScheme - fixedDiscount);
+
+  // Apply percentage discount
+  const percentageDiscount = parseFloat(discountPercentage || "0");
+  const finalTotal = Math.max(
+    0,
+    afterFixedDiscount * (1 - percentageDiscount / 100)
+  );
+
+  return {
+    perPiece: finalTotal / qty,
+    total,
+    finalTotal,
+  };
 }
 
 function SalesSkeleton() {
@@ -232,6 +288,8 @@ export default function SalesPage() {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   );
   const queryClient = useQueryClient();
+  const [currentPage, setCurrentPage] = useState(1);
+  const ITEMS_PER_PAGE = 10;
 
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -239,11 +297,13 @@ export default function SalesPage() {
       buyer_name: "",
       contact_no: "",
       sale_date: new Date(),
-      location_id: "",
       notes: "",
+      print_receipt: false,
+      credit_sale: false,
       items: [
         {
           product_id: "",
+          location_id: "",
           quantity: "",
           price_per_unit: "",
           trade_scheme: "",
@@ -266,8 +326,8 @@ export default function SalesPage() {
     formValues.items.forEach((item) => {
       if (!item.quantity || !item.price_per_unit) return;
 
-      const qty = parseFloat(item.quantity);
-      const price = parseFloat(item.price_per_unit);
+      const qty = parseFloat(item.quantity) || 0;
+      const price = parseFloat(item.price_per_unit) || 0;
       const { totalPrice, finalPrice } = calculateItemFinalPrice(
         qty,
         price,
@@ -280,8 +340,9 @@ export default function SalesPage() {
     });
 
     // Apply bill-level discounts
-    const billDiscAmt = parseFloat(formValues.bill_discount_amount ?? "0");
-    const billDiscPerc = parseFloat(formValues.bill_discount_percentage ?? "0");
+    const billDiscAmt = parseFloat(formValues.bill_discount_amount || "0") || 0;
+    const billDiscPerc =
+      parseFloat(formValues.bill_discount_percentage || "0") || 0;
 
     // First apply fixed amount discount
     final = Math.max(0, final - billDiscAmt);
@@ -290,8 +351,8 @@ export default function SalesPage() {
     const billDiscountFromPercentage = final * (billDiscPerc / 100);
     final = Math.max(0, final - billDiscountFromPercentage);
 
-    setTotalAmount(total);
-    setFinalAmount(final);
+    setTotalAmount(total || 0);
+    setFinalAmount(final || 0);
   }, [formValues]);
 
   // Fetch products
@@ -322,43 +383,29 @@ export default function SalesPage() {
 
   // Fetch stock by location
   const { data: stockByLocation } = useQuery<StockByLocation>({
-    queryKey: ["stockByLocation"],
+    queryKey: ["locationProducts"],
     queryFn: async () => {
-      const { data: transfers, error: transfersError } = await supabase.from(
-        "transfers"
+      const { data: locationProducts, error } = await supabase.from(
+        "location_products"
       ).select(`
-          *,
-          product:products(*),
-          from_location:locations!from_location_id(*),
-          to_location:locations!to_location_id(*)
+          location_id,
+          product_id,
+          quantity,
+          products (*)
         `);
-      if (transfersError) throw transfersError;
+      if (error) throw error;
 
-      // Calculate stock per location
+      // Transform into the expected format
       const stockByLocation = locations?.reduce((acc, location) => {
         acc[location.id] =
-          products?.map((product: Product) => {
-            const incomingTransfers =
-              transfers
-                ?.filter(
-                  (t: Transfer) =>
-                    t.to_location_id === location.id &&
-                    t.product_id === product.id
-                )
-                .reduce((sum: number, t: Transfer) => sum + t.quantity, 0) || 0;
-
-            const outgoingTransfers =
-              transfers
-                ?.filter(
-                  (t: Transfer) =>
-                    t.from_location_id === location.id &&
-                    t.product_id === product.id
-                )
-                .reduce((sum: number, t: Transfer) => sum + t.quantity, 0) || 0;
-
+          products?.map((product) => {
+            const locationProduct = locationProducts?.find(
+              (lp) =>
+                lp.location_id === location.id && lp.product_id === product.id
+            );
             return {
               ...product,
-              quantity: incomingTransfers - outgoingTransfers,
+              quantity: locationProduct?.quantity || 0,
             };
           }) || [];
         return acc;
@@ -389,11 +436,16 @@ export default function SalesPage() {
         .select(
           `
           *,
-          product:products!inner(*)
+          items:sale_items(
+            *,
+            product:products(*),
+            location:locations(*)
+          )
         `
         )
-        .order("sale_date", { ascending: false })
-        .limit(10);
+        .order("created_at", { ascending: false })
+        .limit(50);
+
       if (error) throw error;
       return data;
     },
@@ -410,7 +462,6 @@ export default function SalesPage() {
             buyer_name: values.buyer_name,
             contact_no: values.contact_no,
             sale_date: values.sale_date.toISOString().split("T")[0],
-            location_id: parseInt(values.location_id),
             bill_discount_percentage: values.bill_discount_percentage
               ? parseFloat(values.bill_discount_percentage)
               : null,
@@ -420,6 +471,7 @@ export default function SalesPage() {
             total_amount: totalAmount,
             final_amount: finalAmount,
             notes: values.notes,
+            credit_sale: values.credit_sale,
           })
           .select()
           .single();
@@ -444,16 +496,15 @@ export default function SalesPage() {
 
           const requestedQty = parseInt(item.quantity);
           const locationStock = stockByLocation?.[
-            parseInt(values.location_id)
+            parseInt(item.location_id)
           ]?.find((p: Product) => p.id === parseInt(item.product_id));
 
           if (!locationStock || requestedQty > locationStock.quantity) {
             throw new Error(
-              `Insufficient stock for ${
-                product.name
-              } at selected location. Only ${
-                locationStock?.quantity || 0
-              } units available.`
+              `Insufficient stock for ${product.name} at ${
+                locations?.find((l) => l.id === parseInt(item.location_id))
+                  ?.name
+              }. Only ${locationStock?.quantity || 0} units available.`
             );
           }
 
@@ -471,6 +522,7 @@ export default function SalesPage() {
             .insert({
               sale_id: saleData.id,
               product_id: parseInt(item.product_id),
+              location_id: parseInt(item.location_id),
               quantity: requestedQty,
               price_per_unit: parseFloat(item.price_per_unit),
               trade_scheme: item.trade_scheme || null,
@@ -489,13 +541,13 @@ export default function SalesPage() {
             throw new Error(itemError.message);
           }
 
-          // Update product quantity at the specific location
+          // Update product quantity at the specific location using the new function
           const { error: updateError } = await supabase.rpc(
             "update_location_quantity",
             {
               p_product_id: parseInt(item.product_id),
-              p_location_id: parseInt(values.location_id),
-              p_quantity: -requestedQty,
+              p_location_id: parseInt(item.location_id),
+              p_quantity: -requestedQty, // Negative quantity for sales
             }
           );
 
@@ -513,7 +565,8 @@ export default function SalesPage() {
             *,
             items:sale_items(
               *,
-              product:products(*)
+              product:products(*),
+              location:locations(*)
             )
           `
           )
@@ -532,18 +585,22 @@ export default function SalesPage() {
       }
     },
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["sales"] });
+      queryClient.invalidateQueries({ queryKey: ["products"] });
+      queryClient.invalidateQueries({ queryKey: ["locationProducts"] });
       toast({
-        title: "Sale Recorded",
-        description: `Invoice #${data.invoice_number} has been created.`,
+        title: "Sale recorded successfully",
+        description: `Invoice number: ${data.invoice_number}`,
       });
-      printReceipt(data);
+      if (formValues.print_receipt) {
+        printReceipt(data);
+      }
+      form.reset();
     },
-    onError: (error) => {
+    onError: (error: Error) => {
       toast({
-        title: "Error",
-        description: error.message,
         variant: "destructive",
+        title: "Error recording sale",
+        description: error.message,
       });
     },
   });
@@ -580,10 +637,12 @@ export default function SalesPage() {
         <!-- Header -->
         <div style="display: flex; justify-content: space-between; margin-bottom: 40px;">
           <div>
-            <h1 style="color: #2E7D32; font-size: 32px; margin: 0;">NIKKA NIKKI</h1>
-            <p style="color: #666; margin: 5px 0;">Natural Handmade Products</p>
-            <p style="color: #666; margin: 5px 0;">Lahore, Pakistan</p>
-            <p style="color: #666; margin: 5px 0;">+92 300 1234567</p>
+            <h1 style="color: #EA6AA9; font-size: 32px; margin: 0;">NIKKA NIKKI</h1>
+            <h2 style="color: #59B0E5; font-size: 24px; margin: 5px 0;">NISA COSMETICS</h2>
+            <p style="color: #666; margin: 5px 0;">Plot 10, Sector 16, Korangi Industrial Area</p>
+            <p style="color: #666; margin: 5px 0;">Karachi, Pakistan</p>
+            <p style="color: #666; margin: 5px 0;">Contact: 0333 3066055</p>
+            <p style="color: #666; margin: 5px 0;">Email: nikkanikki.pk@gmail.com</p>
           </div>
           <div style="text-align: right;">
             <h2 style="font-size: 24px; margin: 0; color: #333;">INVOICE</h2>
@@ -613,135 +672,182 @@ export default function SalesPage() {
         <!-- Items Table -->
         <table style="width: 100%; border-collapse: collapse; margin-bottom: 30px;">
           <thead>
-            <tr style="background-color: #2E7D32; color: white;">
-              <th style="padding: 12px; text-align: left;">#</th>
-              <th style="padding: 12px; text-align: left;">Item & Description</th>
-              <th style="padding: 12px; text-align: right;">Qty</th>
-              <th style="padding: 12px; text-align: right;">Rate</th>
-              <th style="padding: 12px; text-align: right;">Amount</th>
+            <tr style="background-color: #EA6AA9; color: white;">
+              <th style="padding: 12px; text-align: center; width: 8%;">Qty</th>
+              <th style="padding: 12px; text-align: left; width: 25%;">Description</th>
+              <th style="padding: 12px; text-align: right; width: 10%;">Retail Rate</th>
+              <th style="padding: 12px; text-align: center; width: 8%;">T.S</th>
+              <th style="padding: 12px; text-align: right; width: 10%;">T.S/Pc</th>
+              <th style="padding: 12px; text-align: right; width: 8%;">Disc %</th>
+              <th style="padding: 12px; text-align: right; width: 10%;">Disc/Pc</th>
+              <th style="padding: 12px; text-align: right; width: 10%;">Net Rate</th>
+              <th style="padding: 12px; text-align: right; width: 11%;">Total</th>
             </tr>
           </thead>
           <tbody>
             ${saleData.items
-              .map(
-                (item, index) => `
-              <tr style="border-bottom: 1px solid #eee;">
-                <td style="padding: 12px;">${index + 1}</td>
-                <td style="padding: 12px;">${item.product.name}</td>
-                <td style="padding: 12px; text-align: right;">${
-                  item.quantity
-                }</td>
-                <td style="padding: 12px; text-align: right;">$${item.price_per_unit.toFixed(
-                  2
-                )}</td>
-                <td style="padding: 12px; text-align: right;">$${item.total_price.toFixed(
-                  2
-                )}</td>
-              </tr>
-              ${
-                item.trade_scheme
-                  ? `
-              <tr style="border-bottom: 1px solid #eee;">
-                <td style="padding: 12px;"></td>
-                <td style="padding: 12px; color: #666;" colspan="4">
-                  Trade Scheme (${item.trade_scheme}): -$${(
-                      calculateTradeSchemeDiscount(
-                        item.quantity,
-                        item.trade_scheme
-                      ) * item.price_per_unit
-                    ).toFixed(2)}
-                </td>
-              </tr>
-              `
-                  : ""
-              }
-              ${
-                item.discount_amount
-                  ? `
-              <tr style="border-bottom: 1px solid #eee;">
-                <td style="padding: 12px;"></td>
-                <td style="padding: 12px; color: #666;" colspan="4">
-                  Discount Amount: -$${item.discount_amount.toFixed(2)}
-                </td>
-              </tr>
-              `
-                  : ""
-              }
-              ${
-                item.discount_percentage
-                  ? `
-              <tr style="border-bottom: 1px solid #eee;">
-                <td style="padding: 12px;"></td>
-                <td style="padding: 12px; color: #666;" colspan="4">
-                  Discount (${item.discount_percentage}%): -$${(
-                      item.total_price -
-                      item.final_price -
-                      (item.discount_amount || 0)
-                    ).toFixed(2)}
-                </td>
-              </tr>
-              `
-                  : ""
-              }
-            `
-              )
+              .map((item) => {
+                const productName = item.product.name
+                  .toLowerCase()
+                  .includes("gift set")
+                  ? `${item.product.name} (4 Pcs)`
+                  : item.product.name;
+
+                // Calculate trade scheme discount per piece
+                const tradeSchemeDiscountPerPiece = item.trade_scheme
+                  ? (calculateTradeSchemeDiscount(
+                      item.quantity,
+                      item.trade_scheme
+                    ) *
+                      item.price_per_unit) /
+                    item.quantity
+                  : 0;
+
+                // Calculate price after trade scheme per piece
+                const priceAfterTradeSchemePerPiece =
+                  item.price_per_unit - tradeSchemeDiscountPerPiece;
+
+                // Calculate percentage discount per piece (applied on price after trade scheme)
+                const percentageDiscountPerPiece = item.discount_percentage
+                  ? priceAfterTradeSchemePerPiece *
+                    (item.discount_percentage / 100)
+                  : 0;
+
+                // Calculate final rate per unit
+                const netRateAfterDiscount = item.final_price / item.quantity;
+
+                // Format quantity display
+                const qtyDisplay = item.product.name
+                  .toLowerCase()
+                  .includes("gift set")
+                  ? `${item.quantity} Ctn`
+                  : `${item.quantity} Pcs`;
+
+                return `
+                <tr style="border-bottom: 1px solid #eee;">
+                  <td style="padding: 12px; text-align: center;">${qtyDisplay}</td>
+                  <td style="padding: 12px; text-align: left;">${productName}</td>
+                  <td style="padding: 12px; text-align: right;">${item.price_per_unit.toFixed(
+                    2
+                  )}</td>
+                  <td style="padding: 12px; text-align: center;">${
+                    item.trade_scheme || "-"
+                  }</td>
+                  <td style="padding: 12px; text-align: right;">${tradeSchemeDiscountPerPiece.toFixed(
+                    2
+                  )}</td>
+                  <td style="padding: 12px; text-align: right;">${
+                    item.discount_percentage?.toFixed(1) || "-"
+                  }</td>
+                  <td style="padding: 12px; text-align: right;">${percentageDiscountPerPiece.toFixed(
+                    2
+                  )}</td>
+                  <td style="padding: 12px; text-align: right;">${netRateAfterDiscount.toFixed(
+                    2
+                  )}</td>
+                  <td style="padding: 12px; text-align: right;">${item.final_price.toFixed(
+                    2
+                  )}</td>
+                </tr>
+              `;
+              })
               .join("")}
           </tbody>
         </table>
 
-        <!-- Summary -->
-        <div style="margin-left: auto; width: 300px;">
-          <div style="display: flex; justify-content: space-between; padding: 8px 0; color: #666;">
-            <span>Subtotal:</span>
-            <span>$${saleData.total_amount.toFixed(2)}</span>
+        <div style="display: flex; justify-content: space-between; margin: 20px 0;">
+          <div style="flex: 1;">
+            <h3 style="margin: 0 0 10px 0; color: #333;">Previous Balance</h3>
+            <table style="width: 100%; border-collapse: collapse;">
+              <tr style="background-color: #f5f5f5;">
+                <td style="padding: 8px;">Previous Total Rs.:</td>
+                <td style="padding: 8px; text-align: right;">24,667.00</td>
+              </tr>
+              ${
+                saleData.credit_sale
+                  ? `
+              <tr>
+                <td style="padding: 8px;">Current Bill Rs.:</td>
+                <td style="padding: 8px; text-align: right;">${saleData.final_amount.toFixed(
+                  2
+                )}</td>
+              </tr>
+              <tr>
+                <td style="padding: 8px;">Total Balance Rs.:</td>
+                <td style="padding: 8px; text-align: right;">${(
+                  24667.0 + saleData.final_amount
+                ).toFixed(2)}</td>
+              </tr>
+              `
+                  : `
+              <tr>
+                <td style="padding: 8px;">Cash Balance Rs.:</td>
+                <td style="padding: 8px; text-align: right;">0.00</td>
+              </tr>
+              <tr>
+                <td style="padding: 8px;">Total Receivable Rs.:</td>
+                <td style="padding: 8px; text-align: right;">24,667.00</td>
+              </tr>
+              `
+              }
+            </table>
           </div>
-          ${
-            saleData.bill_discount_amount
-              ? `
-          <div style="display: flex; justify-content: space-between; padding: 8px 0; color: #666;">
-            <span>Bill Discount Amount:</span>
-            <span>-$${saleData.bill_discount_amount.toFixed(2)}</span>
-          </div>
-          `
-              : ""
-          }
-          ${
-            saleData.bill_discount_percentage
-              ? `
-          <div style="display: flex; justify-content: space-between; padding: 8px 0; color: #666;">
-            <span>Bill Discount (${saleData.bill_discount_percentage}%):</span>
-            <span>-$${(
-              (parseFloat(formValues.bill_discount_percentage ?? "0") / 100) *
-              (totalAmount - parseFloat(formValues.bill_discount_amount ?? "0"))
-            ).toFixed(2)}</span>
-          </div>
-          `
-              : ""
-          }
-          <div style="display: flex; justify-content: space-between; padding: 12px 0; border-top: 2px solid #2E7D32; margin-top: 8px;">
-            <span style="font-weight: bold; color: #333;">Total Due:</span>
-            <span style="font-weight: bold; color: #2E7D32;">$${saleData.final_amount.toFixed(
-              2
-            )}</span>
+          <div style="flex: 1; margin-left: 40px;">
+            <h3 style="margin: 0 0 10px 0; color: #333;">Current Bill</h3>
+            <table style="width: 100%; border-collapse: collapse;">
+              <tr>
+                <td style="padding: 8px;">Sub Total:</td>
+                <td style="padding: 8px; text-align: right;">${saleData.total_amount.toFixed(
+                  2
+                )}</td>
+              </tr>
+              ${(() => {
+                // Calculate total discount (item-level + bill-level)
+                let totalDiscount =
+                  saleData.total_amount - saleData.final_amount;
+
+                // Show bill discount percentage if it exists
+                const billDiscountSection = saleData.bill_discount_percentage
+                  ? `
+                  <tr>
+                    <td style="padding: 8px;">Bill Discount:</td>
+                    <td style="padding: 8px; text-align: right;">${saleData.bill_discount_percentage}%</td>
+                  </tr>
+                `
+                  : "";
+
+                return `
+                  ${billDiscountSection}
+                  <tr style="border-top: 1px solid #eee;">
+                    <td style="padding: 8px;">Total Discount:</td>
+                    <td style="padding: 8px; text-align: right; color: #EA6AA9;">-${totalDiscount.toFixed(
+                      2
+                    )}</td>
+                  </tr>
+                  <tr style="font-weight: bold;">
+                    <td style="padding: 8px;">Net Amount:</td>
+                    <td style="padding: 8px; text-align: right;">${saleData.final_amount.toFixed(
+                      2
+                    )}</td>
+                  </tr>
+                `;
+              })()}
+            </table>
           </div>
         </div>
 
-        <!-- Notes -->
         ${
           saleData.notes
             ? `
-        <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #eee;">
-          <h4 style="color: #333; margin: 0 0 10px 0;">Notes:</h4>
-          <p style="color: #666; margin: 0;">${saleData.notes}</p>
-        </div>
+          <div style="margin: 20px 0; padding-top: 20px; border-top: 1px solid #eee;">
+            <strong>Notes:</strong> ${saleData.notes}
+          </div>
         `
             : ""
         }
 
-        <!-- Footer -->
-        <div style="margin-top: 40px; text-align: center; color: #666; border-top: 1px solid #eee; padding-top: 20px;">
-          <p style="margin: 0;">Thank you for your business!</p>
-          <p style="margin: 5px 0;">For any queries, please contact us at info@nikkanikki.com</p>
+        <div style="margin-top: 40px; text-align: center; color: #666;">
+          <p style="margin: 5px 0;">Thank you for your business!</p>
         </div>
       </div>
     `;
@@ -751,15 +857,20 @@ export default function SalesPage() {
       printWindow.document.write(`
         <html>
           <head>
-            <title>Invoice #${saleData.invoice_number}</title>
+            <title>Nikka Nikki Invoice - ${saleData.buyer_name} - ${saleData.invoice_number}</title>
           </head>
           <body>
             ${receiptContent}
+            <script>
+              window.onload = function() {
+                window.print();
+                document.title = "Nikka Nikki Invoice - ${saleData.buyer_name} - ${saleData.invoice_number}";
+              };
+            </script>
           </body>
         </html>
       `);
       printWindow.document.close();
-      printWindow.print();
     }
   }
 
@@ -769,13 +880,13 @@ export default function SalesPage() {
       buyer_name: "",
       contact_no: "",
       sale_date: new Date(),
-      location_id: "",
       notes: "",
-      bill_discount_percentage: "",
-      bill_discount_amount: "",
+      print_receipt: false,
+      credit_sale: false,
       items: [
         {
           product_id: "",
+          location_id: "",
           quantity: "",
           price_per_unit: "",
           trade_scheme: "",
@@ -786,8 +897,153 @@ export default function SalesPage() {
     });
   };
 
+  // Add these functions near the top of the component
+  const loadSaleToForm = (sale: Sale, isEdit: boolean = false) => {
+    form.reset({
+      buyer_name: sale.buyer_name,
+      contact_no: sale.contact_no || "",
+      sale_date: new Date(sale.sale_date),
+      notes: sale.notes || "",
+      print_receipt: false,
+      credit_sale: sale.credit_sale,
+      bill_discount_percentage: sale.bill_discount_percentage?.toString() || "",
+      bill_discount_amount: sale.bill_discount_amount?.toString() || "",
+      items: sale.items.map((item) => ({
+        product_id: item.product_id.toString(),
+        location_id: item.location_id.toString(),
+        quantity: item.quantity.toString(),
+        price_per_unit: item.price_per_unit.toString(),
+        trade_scheme: item.trade_scheme || "",
+        discount_percentage: item.discount_percentage?.toString() || "",
+        discount_amount: item.discount_amount?.toString() || "",
+      })),
+    });
+
+    // Scroll to the form
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const updateSale = useMutation({
+    mutationFn: async (values: z.infer<typeof formSchema>) => {
+      try {
+        // First delete the old sale
+        const { error: deleteError } = await supabase.rpc("reverse_sale", {
+          sale_id: editingSaleId,
+        });
+
+        if (deleteError) throw deleteError;
+
+        // Then create a new sale with the same invoice number
+        const { data: saleData, error: saleError } = await supabase
+          .from("sales")
+          .insert({
+            invoice_number: editingInvoiceNumber, // Use the original invoice number
+            buyer_name: values.buyer_name,
+            contact_no: values.contact_no,
+            sale_date: values.sale_date.toISOString().split("T")[0],
+            bill_discount_percentage: values.bill_discount_percentage
+              ? parseFloat(values.bill_discount_percentage)
+              : null,
+            bill_discount_amount: values.bill_discount_amount
+              ? parseFloat(values.bill_discount_amount)
+              : null,
+            total_amount: totalAmount,
+            final_amount: finalAmount,
+            notes: values.notes,
+            credit_sale: values.credit_sale,
+          })
+          .select()
+          .single();
+
+        if (saleError) throw saleError;
+
+        // Record the updated items
+        for (const item of values.items) {
+          const { totalPrice, finalPrice } = calculateItemFinalPrice(
+            parseInt(item.quantity),
+            parseFloat(item.price_per_unit),
+            item.trade_scheme,
+            item.discount_percentage,
+            item.discount_amount
+          );
+
+          const { error: itemError } = await supabase
+            .from("sale_items")
+            .insert({
+              sale_id: saleData.id,
+              product_id: parseInt(item.product_id),
+              location_id: parseInt(item.location_id),
+              quantity: parseInt(item.quantity),
+              price_per_unit: parseFloat(item.price_per_unit),
+              trade_scheme: item.trade_scheme || null,
+              discount_percentage: item.discount_percentage
+                ? parseFloat(item.discount_percentage)
+                : null,
+              discount_amount: item.discount_amount
+                ? parseFloat(item.discount_amount)
+                : null,
+              total_price: totalPrice,
+              final_price: finalPrice,
+            });
+
+          if (itemError) throw itemError;
+
+          // Update product quantity
+          const { error: updateError } = await supabase.rpc(
+            "update_location_quantity",
+            {
+              p_product_id: parseInt(item.product_id),
+              p_location_id: parseInt(item.location_id),
+              p_quantity: -parseInt(item.quantity),
+            }
+          );
+
+          if (updateError) throw updateError;
+        }
+
+        return saleData;
+      } catch (error) {
+        console.error("Update error:", error);
+        throw error;
+      }
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["products"] });
+      queryClient.invalidateQueries({ queryKey: ["locationProducts"] });
+      queryClient.invalidateQueries({ queryKey: ["sales"] });
+      toast({
+        title: "Sale updated successfully",
+        description: `Invoice number: ${data.invoice_number}`,
+      });
+      setEditingSaleId(null);
+      setEditingInvoiceNumber(null);
+      if (formValues.print_receipt) {
+        printReceipt(data);
+      }
+      form.reset();
+    },
+    onError: (error: Error) => {
+      toast({
+        variant: "destructive",
+        title: "Error updating sale",
+        description: error.message,
+      });
+    },
+  });
+
+  // Add state for editing
+  const [editingSaleId, setEditingSaleId] = useState<number | null>(null);
+  const [editingInvoiceNumber, setEditingInvoiceNumber] = useState<
+    string | null
+  >(null);
+
+  // Update the submit handler
   function onSubmit(values: z.infer<typeof formSchema>) {
-    recordSale.mutate(values);
+    if (editingSaleId) {
+      updateSale.mutate(values);
+    } else {
+      recordSale.mutate(values);
+    }
   }
 
   if (isLoading || productsLoading || locationsLoading) {
@@ -800,37 +1056,6 @@ export default function SalesPage() {
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-4">
-              <FormField
-                control={form.control}
-                name="location_id"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Sale Location</FormLabel>
-                    <Select
-                      onValueChange={field.onChange}
-                      defaultValue={field.value}
-                    >
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select location" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {locations?.map((location) => (
-                          <SelectItem
-                            key={location.id}
-                            value={location.id.toString()}
-                          >
-                            {location.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
               <FormField
                 control={form.control}
                 name="buyer_name"
@@ -922,29 +1147,26 @@ export default function SalesPage() {
                   <CardTitle>Items</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  {formValues.items.map((_, index) => (
-                    <div key={index} className="space-y-4 mb-6">
-                      <div className="flex justify-between items-center">
-                        <h4 className="text-sm font-medium">
-                          Item {index + 1}
-                        </h4>
-                        {index > 0 && (
-                          <Button
-                            type="button"
-                            variant="destructive"
-                            size="sm"
-                            onClick={() => {
-                              const currentItems = form.getValues("items");
-                              form.setValue(
-                                "items",
-                                currentItems.filter((_, i) => i !== index)
-                              );
-                            }}
-                          >
-                            Remove
-                          </Button>
-                        )}
-                      </div>
+                  {form.getValues("items").map((_, index) => (
+                    <div
+                      key={index}
+                      className="space-y-4 p-4 border rounded-lg relative"
+                    >
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="absolute right-2 top-2"
+                        onClick={() => {
+                          const currentItems = form.getValues("items");
+                          form.setValue(
+                            "items",
+                            currentItems.filter((_, i) => i !== index)
+                          );
+                        }}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
 
                       <FormField
                         control={form.control}
@@ -958,52 +1180,111 @@ export default function SalesPage() {
                             >
                               <FormControl>
                                 <SelectTrigger>
-                                  <SelectValue placeholder="Select a product" />
+                                  <SelectValue placeholder="Select product" />
                                 </SelectTrigger>
                               </FormControl>
                               <SelectContent>
-                                {products?.map((product) => (
-                                  <SelectItem
-                                    key={product.id}
-                                    value={product.id.toString()}
-                                  >
-                                    {product.name}
-                                  </SelectItem>
-                                ))}
+                                <SelectGroup>
+                                  <SelectLabel>Ready Products</SelectLabel>
+                                  {readyProducts.map((product) => (
+                                    <SelectItem
+                                      key={product.id}
+                                      value={product.id.toString()}
+                                    >
+                                      {product.name}
+                                    </SelectItem>
+                                  ))}
+                                </SelectGroup>
+                                <SelectGroup>
+                                  <SelectLabel>Other Products</SelectLabel>
+                                  {otherProducts.map((product) => (
+                                    <SelectItem
+                                      key={product.id}
+                                      value={product.id.toString()}
+                                    >
+                                      {product.name}
+                                    </SelectItem>
+                                  ))}
+                                </SelectGroup>
                               </SelectContent>
                             </Select>
-                            {field.value && (
-                              <div className="mt-2 grid grid-cols-4 gap-2">
-                                {locations?.map((location) => {
-                                  const stock = stockByLocation?.[
-                                    location.id
-                                  ]?.find(
-                                    (p) => p.id === parseInt(field.value)
-                                  );
-                                  return (
-                                    <div
-                                      key={location.id}
-                                      className={cn(
-                                        "flex flex-col items-center p-2 rounded-lg border text-sm",
-                                        location.id.toString() ===
-                                          form.getValues("location_id")
-                                          ? "bg-primary text-primary-foreground"
-                                          : "bg-background"
-                                      )}
-                                    >
-                                      <span className="font-medium">
-                                        {location.name}
-                                      </span>
-                                      <span>{stock?.quantity || 0}</span>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            )}
                             <FormMessage />
                           </FormItem>
                         )}
                       />
+
+                      {/* Show stock availability across locations when product is selected */}
+                      {form.watch(`items.${index}.product_id`) && (
+                        <div className="mt-2 space-y-2">
+                          <FormLabel>
+                            Select Location (Click on available stock)
+                          </FormLabel>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                            {locations?.map((location) => {
+                              const locationStock =
+                                stockByLocation?.[location.id] || [];
+                              const stockAtLocation = Array.isArray(
+                                locationStock
+                              )
+                                ? locationStock.find(
+                                    (p) =>
+                                      p.id ===
+                                      parseInt(
+                                        form.watch(`items.${index}.product_id`)
+                                      )
+                                  )
+                                : undefined;
+                              const isSelected =
+                                form.watch(`items.${index}.location_id`) ===
+                                location.id.toString();
+
+                              return (
+                                <Button
+                                  key={location.id}
+                                  type="button"
+                                  variant={isSelected ? "default" : "outline"}
+                                  className={cn(
+                                    "w-full justify-between",
+                                    !stockAtLocation?.quantity && "opacity-50",
+                                    isSelected && "ring-2 ring-primary"
+                                  )}
+                                  onClick={() => {
+                                    if (stockAtLocation?.quantity) {
+                                      form.setValue(
+                                        `items.${index}.location_id`,
+                                        location.id.toString()
+                                      );
+                                    }
+                                  }}
+                                  disabled={!stockAtLocation?.quantity}
+                                >
+                                  <span>{location.name}</span>
+                                  <Badge
+                                    variant={
+                                      isSelected ? "secondary" : "outline"
+                                    }
+                                  >
+                                    {
+                                      formatGiftSetQuantity(
+                                        stockAtLocation?.quantity || 0,
+                                        products?.find(
+                                          (p) =>
+                                            p.id ===
+                                            parseInt(
+                                              form.watch(
+                                                `items.${index}.product_id`
+                                              )
+                                            )
+                                        )?.name || ""
+                                      ).display
+                                    }
+                                  </Badge>
+                                </Button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
 
                       <div className="grid grid-cols-2 gap-4">
                         <FormField
@@ -1013,11 +1294,7 @@ export default function SalesPage() {
                             <FormItem>
                               <FormLabel>Quantity</FormLabel>
                               <FormControl>
-                                <Input
-                                  type="number"
-                                  placeholder="Enter quantity"
-                                  {...field}
-                                />
+                                <Input type="number" {...field} />
                               </FormControl>
                               <FormMessage />
                             </FormItem>
@@ -1031,12 +1308,7 @@ export default function SalesPage() {
                             <FormItem>
                               <FormLabel>Price per Unit</FormLabel>
                               <FormControl>
-                                <Input
-                                  type="number"
-                                  step="0.01"
-                                  placeholder="Enter price"
-                                  {...field}
-                                />
+                                <Input type="number" {...field} />
                               </FormControl>
                               <FormMessage />
                             </FormItem>
@@ -1044,71 +1316,88 @@ export default function SalesPage() {
                         />
                       </div>
 
-                      <Collapsible open={isOpen} onOpenChange={setIsOpen}>
-                        <CollapsibleTrigger className="flex items-center text-sm text-muted-foreground hover:text-foreground">
-                          {isOpen ? (
-                            <ChevronDown className="h-4 w-4 mr-1" />
-                          ) : (
-                            <ChevronRight className="h-4 w-4 mr-1" />
+                      <div className="grid grid-cols-3 gap-4">
+                        <FormField
+                          control={form.control}
+                          name={`items.${index}.trade_scheme`}
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Trade Scheme</FormLabel>
+                              <FormControl>
+                                <Input {...field} placeholder="e.g. 10+1" />
+                              </FormControl>
+                              <FormDescription>
+                                Format: buy+free (e.g. 10+1)
+                              </FormDescription>
+                              <FormMessage />
+                            </FormItem>
                           )}
-                          Discounts
-                        </CollapsibleTrigger>
-                        <CollapsibleContent className="space-y-4 mt-4">
-                          <FormField
-                            control={form.control}
-                            name={`items.${index}.trade_scheme`}
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormControl>
-                                  <Input
-                                    placeholder="Trade Scheme (e.g., 12+2)"
-                                    {...field}
-                                  />
-                                </FormControl>
-                                <FormDescription className="text-xs">
-                                  Enter in format: buy+free (e.g., 12+2)
-                                </FormDescription>
-                              </FormItem>
-                            )}
-                          />
+                        />
 
-                          <div className="grid grid-cols-2 gap-4">
-                            <FormField
-                              control={form.control}
-                              name={`items.${index}.discount_percentage`}
-                              render={({ field }) => (
-                                <FormItem>
-                                  <FormControl>
-                                    <Input
-                                      type="number"
-                                      step="0.01"
-                                      placeholder="Discount %"
-                                      {...field}
-                                    />
-                                  </FormControl>
-                                </FormItem>
-                              )}
-                            />
+                        <FormField
+                          control={form.control}
+                          name={`items.${index}.discount_percentage`}
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Discount %</FormLabel>
+                              <FormControl>
+                                <Input type="number" {...field} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
 
-                            <FormField
-                              control={form.control}
-                              name={`items.${index}.discount_amount`}
-                              render={({ field }) => (
-                                <FormItem>
-                                  <FormControl>
-                                    <Input
-                                      type="number"
-                                      step="0.01"
-                                      placeholder="Discount $"
-                                      {...field}
-                                    />
-                                  </FormControl>
-                                </FormItem>
-                              )}
-                            />
+                        <FormField
+                          control={form.control}
+                          name={`items.${index}.discount_amount`}
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Discount Amount</FormLabel>
+                              <FormControl>
+                                <Input type="number" {...field} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+
+                      {/* Live Price Calculations */}
+                      {(() => {
+                        const item = form.watch(`items.${index}`);
+                        const { perPiece, total, finalTotal } =
+                          calculateLiveItemPrice(
+                            item.quantity,
+                            item.price_per_unit,
+                            item.trade_scheme,
+                            item.discount_percentage,
+                            item.discount_amount
+                          );
+
+                        if (!item.quantity || !item.price_per_unit) return null;
+
+                        return (
+                          <div className="mt-2 p-3 bg-muted/50 rounded-lg space-y-1">
+                            <div className="flex justify-between text-sm">
+                              <span className="text-muted-foreground">
+                                Original Total:
+                              </span>
+                              <span>${total.toFixed(2)}</span>
+                            </div>
+                            <div className="flex justify-between text-sm">
+                              <span className="text-muted-foreground">
+                                Final Total:
+                              </span>
+                              <span>${finalTotal.toFixed(2)}</span>
+                            </div>
+                            <div className="flex justify-between text-sm font-medium">
+                              <span>Final Rate Per Piece:</span>
+                              <span>${perPiece.toFixed(2)}</span>
+                            </div>
                           </div>
-                        </CollapsibleContent>
-                      </Collapsible>
+                        );
+                      })()}
                     </div>
                   ))}
 
@@ -1122,6 +1411,7 @@ export default function SalesPage() {
                         ...currentItems,
                         {
                           product_id: "",
+                          location_id: "",
                           quantity: "",
                           price_per_unit: "",
                           trade_scheme: "",
@@ -1246,13 +1536,61 @@ export default function SalesPage() {
             )}
           />
 
+          <FormField
+            control={form.control}
+            name="print_receipt"
+            render={({ field }) => (
+              <FormItem className="flex flex-row items-start space-x-3 space-y-0 rounded-md border p-4">
+                <FormControl>
+                  <Checkbox
+                    checked={field.value}
+                    onCheckedChange={field.onChange}
+                  />
+                </FormControl>
+                <div className="space-y-1 leading-none">
+                  <FormLabel>Print Receipt</FormLabel>
+                  <FormDescription>
+                    Automatically print receipt after recording sale
+                  </FormDescription>
+                </div>
+              </FormItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name="credit_sale"
+            render={({ field }) => (
+              <FormItem className="flex flex-row items-start space-x-3 space-y-0 rounded-md border p-4">
+                <FormControl>
+                  <Checkbox
+                    checked={field.value}
+                    onCheckedChange={field.onChange}
+                  />
+                </FormControl>
+                <div className="space-y-1 leading-none">
+                  <FormLabel>Credit Sale</FormLabel>
+                  <FormDescription>
+                    Check if this is a credit sale
+                  </FormDescription>
+                </div>
+              </FormItem>
+            )}
+          />
+
           <div className="flex gap-4">
             <Button
               type="submit"
               className="flex-1"
-              disabled={recordSale.isPending}
+              disabled={recordSale.isPending || updateSale.isPending}
             >
-              {recordSale.isPending ? "Recording..." : "Record Sale"}
+              {editingSaleId
+                ? updateSale.isPending
+                  ? "Updating..."
+                  : "Update Sale"
+                : recordSale.isPending
+                ? "Recording..."
+                : "Record Sale"}
             </Button>
             <Button type="button" variant="outline" onClick={handleReset}>
               Reset Form
@@ -1286,30 +1624,40 @@ export default function SalesPage() {
                     </p>
                   </div>
                 </div>
-                <div className="flex items-center gap-4">
-                  <div className="text-right">
-                    <p className="font-medium">
-                      ${sale.final_amount.toFixed(2)}
-                    </p>
-                    <p className="text-sm text-muted-foreground">
-                      {sale.items.length} items
-                    </p>
-                  </div>
-                  <div className="flex gap-2">
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      onClick={() => printReceipt(sale)}
-                    >
-                      <Printer className="h-4 w-4" />
-                    </Button>
-                    <DeleteButton
-                      onDelete={() => deleteSale.mutate(sale.id)}
-                      loading={deleteSale.isPending}
-                      title="Reverse Sale"
-                      description="This will reverse the sale and restore the product quantities. This action cannot be undone."
-                    />
-                  </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setEditingSaleId(sale.id);
+                      setEditingInvoiceNumber(sale.invoice_number);
+                      loadSaleToForm(sale, true);
+                    }}
+                  >
+                    Edit
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      loadSaleToForm(sale, false);
+                    }}
+                  >
+                    Copy
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => printReceipt(sale)}
+                  >
+                    <Printer className="h-4 w-4" />
+                  </Button>
+                  <DeleteButton
+                    onDelete={() => deleteSale.mutate(sale.id)}
+                    loading={deleteSale.isPending}
+                    title="Reverse Sale"
+                    description="This will reverse the sale and restore the product quantities. This action cannot be undone."
+                  />
                 </div>
               </CardContent>
               <Collapsible>
@@ -1408,6 +1756,41 @@ export default function SalesPage() {
               </Collapsible>
             </Card>
           ))}
+
+          {/* Pagination */}
+          {recentSales && recentSales.length > ITEMS_PER_PAGE && (
+            <div className="flex justify-center gap-2 mt-4">
+              <Button
+                variant="outline"
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
+              >
+                Previous
+              </Button>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-muted-foreground">
+                  Page {currentPage} of{" "}
+                  {Math.ceil(recentSales.length / ITEMS_PER_PAGE)}
+                </span>
+              </div>
+              <Button
+                variant="outline"
+                onClick={() => setCurrentPage((p) => p + 1)}
+                disabled={
+                  currentPage >= Math.ceil(recentSales.length / ITEMS_PER_PAGE)
+                }
+              >
+                Next
+              </Button>
+            </div>
+          )}
+
+          {/* Empty state */}
+          {recentSales?.length === 0 && (
+            <div className="text-center py-8 text-muted-foreground">
+              No sales records found
+            </div>
+          )}
         </div>
       </div>
     </div>

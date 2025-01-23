@@ -24,6 +24,13 @@ import {
   CollapsibleTrigger,
   CollapsibleContent,
 } from "@/components/ui/collapsible";
+import { formatGiftSetQuantity } from "@/lib/utils";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+  TooltipProvider,
+} from "@/components/ui/tooltip";
 
 interface Product {
   id: number;
@@ -107,239 +114,286 @@ export default function Dashboard() {
   }));
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold text-primary">
-          Nikka Nikki Dashboard
-        </h1>
-      </div>
+    <TooltipProvider>
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-3xl font-bold text-primary">
+            Nikka Nikki Dashboard
+          </h1>
+        </div>
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        <Card className="bg-gradient-to-br from-pink-500 to-rose-500 text-white">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Gift Sets</CardTitle>
-            <Gift className="h-4 w-4 text-pink-200" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{readyGiftSets}</div>
-            <p className="text-xs text-pink-200">Ready to sell</p>
-            <Progress className="mt-2" value={(readyGiftSets / 1000) * 100} />
-          </CardContent>
-        </Card>
-
-        <Card className="bg-gradient-to-br from-purple-500 to-indigo-500 text-white">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">
-              Potential Gift Sets
-            </CardTitle>
-            <Package className="h-4 w-4 text-purple-200" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{potentialGiftSets}</div>
-            <p className="text-xs text-purple-200">Can be assembled</p>
-            <Progress
-              className="mt-2"
-              value={(potentialGiftSets / 1000) * 100}
-            />
-          </CardContent>
-        </Card>
-
-        <Card className="bg-gradient-to-br from-green-500 to-emerald-500 text-white">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Today's Sales</CardTitle>
-            <DollarSign className="h-4 w-4 text-green-200" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">${totalSales.toFixed(2)}</div>
-            <p className="text-xs text-green-200">
-              {todaySales.length} transactions
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-
-      <div className="grid gap-4 md:grid-cols-2">
-        {/* Stock by Location */}
-        <Card className="col-span-2">
-          <CardHeader>
-            <CardTitle className="text-lg font-semibold text-primary">
-              Stock by Location
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid gap-4">
-              {locations?.map((location) => {
-                const locationProducts = stockByLocation?.[location.id] || [];
-                const giftSets = locationProducts.filter(
-                  (p: Product) => p.name === "Gift Set"
-                );
-                const otherProducts = locationProducts.filter(
-                  (p: Product) => p.name !== "Gift Set"
-                );
-                const totalItems = locationProducts.reduce(
-                  (sum: number, p: Product) => sum + p.quantity,
-                  0
-                );
-
-                return (
-                  <Card key={location.id}>
-                    <CardHeader className="py-4">
-                      <div className="flex items-center justify-between">
-                        <CardTitle className="text-sm font-medium flex items-center gap-2">
-                          <MapPin className="h-4 w-4" />
-                          {location.name}
-                        </CardTitle>
-                        <span className="text-sm text-muted-foreground">
-                          {totalItems} total items
-                        </span>
-                      </div>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="space-y-4">
-                        {/* Gift Sets */}
-                        {giftSets.map((product: Product) => (
-                          <div
-                            key={product.id}
-                            className="flex items-center space-x-2 bg-secondary/10 p-3 rounded-lg"
-                          >
-                            <Gift className="h-5 w-5 text-secondary" />
-                            <div>
-                              <p className="text-sm font-medium">
-                                {product.name}
-                              </p>
-                              <p className="text-xl font-bold text-primary">
-                                {product.quantity}
-                              </p>
-                            </div>
-                          </div>
-                        ))}
-
-                        {/* Other Products - Collapsible */}
-                        {otherProducts.length > 0 && (
-                          <Collapsible>
-                            <CollapsibleTrigger asChild>
-                              <Button
-                                variant="outline"
-                                className="w-full justify-between"
-                              >
-                                Other Products
-                                <ChevronDown className="h-4 w-4" />
-                              </Button>
-                            </CollapsibleTrigger>
-                            <CollapsibleContent className="mt-4">
-                              <div className="grid grid-cols-2 gap-4">
-                                {otherProducts.map((product: Product) => (
-                                  <div
-                                    key={product.id}
-                                    className="flex items-center space-x-2 bg-secondary/10 p-3 rounded-lg"
-                                  >
-                                    <ShoppingBag className="h-5 w-5 text-secondary" />
-                                    <div>
-                                      <p className="text-sm font-medium">
-                                        {product.name}
-                                      </p>
-                                      <p className="text-xl font-bold text-primary">
-                                        {product.quantity}
-                                      </p>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            </CollapsibleContent>
-                          </Collapsible>
-                        )}
-                      </div>
-                    </CardContent>
-                  </Card>
-                );
-              })}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="col-span-2">
-          <CardHeader>
-            <CardTitle className="text-lg font-semibold text-primary">
-              Ready Products
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-2 gap-4">
-              {Object.entries(inventory.readyProducts).map(
-                ([product, count]) => (
-                  <div
-                    key={product}
-                    className="flex items-center space-x-2 bg-secondary/10 p-3 rounded-lg"
-                  >
-                    <ShoppingBag className="h-5 w-5 text-secondary" />
-                    <div>
-                      <p className="text-sm font-medium capitalize">
-                        {product}
-                      </p>
-                      <p className="text-xl font-bold text-primary">{count}</p>
-                    </div>
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          <Card className="bg-gradient-to-br from-pink-500 to-rose-500 text-white">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Gift Sets</CardTitle>
+              <Gift className="h-4 w-4 text-pink-200" />
+            </CardHeader>
+            <CardContent>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className="text-2xl font-bold cursor-help">
+                    {formatGiftSetQuantity(readyGiftSets, "Gift Set").display}
                   </div>
-                )
-              )}
-            </div>
-          </CardContent>
-        </Card>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>
+                    {formatGiftSetQuantity(readyGiftSets, "Gift Set").tooltip}
+                  </p>
+                </TooltipContent>
+              </Tooltip>
+              <p className="text-xs text-pink-200">Ready to sell</p>
+              <Progress className="mt-2" value={(readyGiftSets / 1000) * 100} />
+            </CardContent>
+          </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg font-semibold text-primary">
-              Unfinished Products
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ul className="space-y-2">
-              {Object.entries(inventory.unfinishedProducts).map(
-                ([product, details]) => (
-                  <li
-                    key={product}
-                    className="flex justify-between items-center bg-secondary/10 p-2 rounded"
-                  >
-                    <span className="capitalize text-sm">{product}</span>
-                    <span className="font-bold text-primary">
-                      {Object.values(details)[0]}
-                    </span>
-                  </li>
-                )
-              )}
-            </ul>
-          </CardContent>
-        </Card>
+          <Card className="bg-gradient-to-br from-purple-500 to-indigo-500 text-white">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">
+                Potential Gift Sets
+              </CardTitle>
+              <Package className="h-4 w-4 text-purple-200" />
+            </CardHeader>
+            <CardContent>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className="text-2xl font-bold cursor-help">
+                    {
+                      formatGiftSetQuantity(potentialGiftSets, "Gift Set")
+                        .display
+                    }
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>
+                    {
+                      formatGiftSetQuantity(potentialGiftSets, "Gift Set")
+                        .tooltip
+                    }
+                  </p>
+                </TooltipContent>
+              </Tooltip>
+              <p className="text-xs text-purple-200">Can be assembled</p>
+              <Progress
+                className="mt-2"
+                value={(potentialGiftSets / 1000) * 100}
+              />
+            </CardContent>
+          </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Inventory Alerts</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              {Object.entries(inventory.readyProducts).map(
-                ([product, count]) => {
-                  const lowStock = count < 100;
-                  return lowStock ? (
-                    <Alert
+          <Card className="bg-gradient-to-br from-green-500 to-emerald-500 text-white">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">
+                Today's Sales
+              </CardTitle>
+              <DollarSign className="h-4 w-4 text-green-200" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">${totalSales.toFixed(2)}</div>
+              <p className="text-xs text-green-200">
+                {todaySales.length} transactions
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          {/* Stock by Location */}
+          <Card className="col-span-2">
+            <CardHeader>
+              <CardTitle className="text-lg font-semibold text-primary">
+                Stock by Location
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid gap-4">
+                {locations?.map((location) => {
+                  const locationProducts = stockByLocation?.[location.id] || [];
+                  const giftSets = locationProducts.filter(
+                    (p: Product) => p.name === "Gift Set"
+                  );
+                  const otherProducts = locationProducts.filter(
+                    (p: Product) => p.name !== "Gift Set"
+                  );
+                  const totalItems = locationProducts.reduce(
+                    (sum: number, p: Product) => sum + p.quantity,
+                    0
+                  );
+
+                  return (
+                    <Card key={location.id}>
+                      <CardHeader className="py-4">
+                        <div className="flex items-center justify-between">
+                          <CardTitle className="text-sm font-medium flex items-center gap-2">
+                            <MapPin className="h-4 w-4" />
+                            {location.name}
+                          </CardTitle>
+                          <span className="text-sm text-muted-foreground">
+                            {totalItems} total items
+                          </span>
+                        </div>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="space-y-4">
+                          {/* Gift Sets */}
+                          {giftSets.map((product: Product) => {
+                            const quantity = formatGiftSetQuantity(
+                              product.quantity,
+                              product.name
+                            );
+                            return (
+                              <div
+                                key={product.id}
+                                className="flex items-center space-x-2 bg-secondary/10 p-3 rounded-lg"
+                              >
+                                <Gift className="h-5 w-5 text-secondary" />
+                                <div>
+                                  <p className="text-sm font-medium">
+                                    {product.name}
+                                  </p>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <p className="text-xl font-bold text-primary cursor-help">
+                                        {quantity.display}
+                                      </p>
+                                    </TooltipTrigger>
+                                    <TooltipContent>
+                                      <p>{quantity.tooltip}</p>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </div>
+                              </div>
+                            );
+                          })}
+
+                          {/* Other Products - Collapsible */}
+                          {otherProducts.length > 0 && (
+                            <Collapsible>
+                              <CollapsibleTrigger asChild>
+                                <Button
+                                  variant="outline"
+                                  className="w-full justify-between"
+                                >
+                                  Other Products
+                                  <ChevronDown className="h-4 w-4" />
+                                </Button>
+                              </CollapsibleTrigger>
+                              <CollapsibleContent className="mt-4">
+                                <div className="grid grid-cols-2 gap-4">
+                                  {otherProducts.map((product: Product) => (
+                                    <div
+                                      key={product.id}
+                                      className="flex items-center space-x-2 bg-secondary/10 p-3 rounded-lg"
+                                    >
+                                      <ShoppingBag className="h-5 w-5 text-secondary" />
+                                      <div>
+                                        <p className="text-sm font-medium">
+                                          {product.name}
+                                        </p>
+                                        <p className="text-xl font-bold text-primary">
+                                          {product.quantity}
+                                        </p>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </CollapsibleContent>
+                            </Collapsible>
+                          )}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="col-span-2">
+            <CardHeader>
+              <CardTitle className="text-lg font-semibold text-primary">
+                Ready Products
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-2 gap-4">
+                {Object.entries(inventory.readyProducts).map(
+                  ([product, count]) => (
+                    <div
                       key={product}
-                      variant={lowStock ? "destructive" : "default"}
+                      className="flex items-center space-x-2 bg-secondary/10 p-3 rounded-lg"
                     >
-                      <AlertTriangle className="h-4 w-4" />
-                      <AlertTitle>Low Stock Warning</AlertTitle>
-                      <AlertDescription>
-                        {product} is running low ({count} units remaining)
-                      </AlertDescription>
-                    </Alert>
-                  ) : null;
-                }
-              )}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+                      <ShoppingBag className="h-5 w-5 text-secondary" />
+                      <div>
+                        <p className="text-sm font-medium capitalize">
+                          {product}
+                        </p>
+                        <p className="text-xl font-bold text-primary">
+                          {count}
+                        </p>
+                      </div>
+                    </div>
+                  )
+                )}
+              </div>
+            </CardContent>
+          </Card>
 
-      <Charts salesChartData={salesChartData} />
-    </div>
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg font-semibold text-primary">
+                Unfinished Products
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ul className="space-y-2">
+                {Object.entries(inventory.unfinishedProducts).map(
+                  ([product, details]) => (
+                    <li
+                      key={product}
+                      className="flex justify-between items-center bg-secondary/10 p-2 rounded"
+                    >
+                      <span className="capitalize text-sm">{product}</span>
+                      <span className="font-bold text-primary">
+                        {Object.values(details)[0]}
+                      </span>
+                    </li>
+                  )
+                )}
+              </ul>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Inventory Alerts</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                {Object.entries(inventory.readyProducts).map(
+                  ([product, count]) => {
+                    const lowStock = count < 100;
+                    return lowStock ? (
+                      <Alert
+                        key={product}
+                        variant={lowStock ? "destructive" : "default"}
+                      >
+                        <AlertTriangle className="h-4 w-4" />
+                        <AlertTitle>Low Stock Warning</AlertTitle>
+                        <AlertDescription>
+                          {product} is running low ({count} units remaining)
+                        </AlertDescription>
+                      </Alert>
+                    ) : null;
+                  }
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        <Charts salesChartData={salesChartData} />
+      </div>
+    </TooltipProvider>
   );
 }
 

@@ -5,29 +5,27 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-export function formatGiftSetQuantity(quantity: number, productName?: string): { display: string; tooltip: string } {
-  if (!productName || !productName.toLowerCase().includes('gift set')) {
+export function formatGiftSetQuantity(quantity: number, productName: string) {
+  if (!productName.toLowerCase().includes('gift set')) {
     return {
-      display: `${quantity} pcs`,
-      tooltip: `${quantity} pcs`
+      display: quantity.toString(),
+      tooltip: quantity.toString()
     };
   }
 
-  const cartons = Math.floor(quantity / 24);
-  const pieces = quantity % 24;
+  const CARTON_SIZE = 24;
+  const cartons = Math.floor(quantity / CARTON_SIZE);
+  const pieces = quantity % CARTON_SIZE;
 
-  // Format for the main display (carton-based)
-  let display = '';
+  let display = `${quantity} pcs`;
   if (cartons > 0) {
-    display = pieces > 0 ? `${cartons} ctn + ${pieces} pcs` : `${cartons} ctn`;
-  } else {
-    display = `${quantity} pcs`;
+    display = `${cartons} ctn${cartons > 1 ? 's' : ''}${pieces > 0 ? ` + ${pieces} pcs` : ''}`;
   }
 
-  // Format for the tooltip (show both formats)
-  const tooltip = cartons > 0
-    ? `${quantity} pcs (${cartons} cartons${pieces > 0 ? ` + ${pieces} pcs` : ''})`
-    : `${quantity} pcs`;
+  const tooltip = `${quantity} pieces (${cartons} cartons${pieces > 0 ? ` and ${pieces} pieces` : ''})`;
 
-  return { display, tooltip };
+  return {
+    display,
+    tooltip
+  };
 }

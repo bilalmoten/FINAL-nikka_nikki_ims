@@ -50,7 +50,7 @@ export function InventoryTable({ data }: InventoryTableProps) {
                         <span className="cursor-help">{quantity.display}</span>
                       </TooltipTrigger>
                       <TooltipContent>
-                        <p>Total: {quantity.tooltip}</p>
+                        <p>{quantity.tooltip}</p>
                       </TooltipContent>
                     </Tooltip>
                   ) : (
