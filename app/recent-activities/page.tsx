@@ -7,12 +7,17 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ShoppingCart, ArrowUp } from "lucide-react";
 import { useDashboardQuery } from "@/hooks/use-dashboard-query";
 import { format } from "date-fns";
+import { useQuery } from "@tanstack/react-query";
+import { createBrowserClient } from "@supabase/ssr";
 
 interface Sale {
   id: number;
   sale_date: string;
   price: number;
   quantity: number;
+  final_amount?: number;
+  payment_received?: number;
+  total_amount?: number;
 }
 
 type Activity = Sale;
@@ -51,7 +56,30 @@ function getActivityDate(activity: Activity): string {
 }
 
 export default function RecentActivities() {
+  const supabase = createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  );
+
   const { salesData, salesLoading } = useDashboardQuery();
+
+  const { data: sales } = useQuery({
+    queryKey: ["sales"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("sales")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(50);
+      if (error) throw error;
+      return data?.map((sale: Sale) => ({
+        ...sale,
+        final_amount: sale.final_amount || 0,
+        payment_received: sale.payment_received || 0,
+        total_amount: sale.total_amount || 0,
+      }));
+    },
+  });
 
   if (salesLoading) {
     return <ActivitySkeleton />;
@@ -72,7 +100,10 @@ export default function RecentActivities() {
 
   // Calculate totals
   const totals = {
-    sales: todayActivities.sales.reduce((sum: number, s: Sale) => sum + s.price, 0),
+    sales: todayActivities.sales.reduce(
+      (sum: number, s: Sale) => sum + s.price,
+      0
+    ),
   };
 
   // Update the spread array with type casting

@@ -6,7 +6,7 @@
 
 - `id` (integer, PK): Auto-incrementing product ID
 - `name` (varchar[255]): Product name
-- `stage` (enum): Product stage
+- `stage` (USER-DEFINED): Product stage
 - `quantity` (integer): Total quantity (default: 0)
 - `created_at` (timestamp): Creation timestamp
 - `updated_at` (timestamp): Last update timestamp
@@ -38,6 +38,9 @@
 - `final_amount` (numeric): Final amount after discounts
 - `notes` (text): Optional notes
 - `created_at` (timestamp): Creation timestamp
+- `credit_sale` (boolean): Whether it's a credit sale (default: false)
+- `customer_id` (bigint, FK): Reference to customers
+- `payment_received` (numeric): Amount received (default: 0)
 
 ### 5. Sale Items
 
@@ -52,6 +55,7 @@
 - `total_price` (numeric): Total before discounts
 - `final_price` (numeric): Final price after discounts
 - `created_at` (timestamp): Creation timestamp
+- `location_id` (integer, FK): Reference to locations
 
 ### 6. Transfers
 
@@ -91,19 +95,50 @@
 - `reason` (varchar[255]): Optional reason
 - `created_at` (timestamp): Creation timestamp
 
-## Functions
+### 10. Customers
+
+- `id` (bigint, PK): Customer ID
+- `name` (text): Customer name
+- `phone` (text): Optional phone number
+- `address` (text): Optional address
+- `total_sales` (numeric): Total sales amount (default: 0)
+- `total_payments` (numeric): Total payments received (default: 0)
+- `current_balance` (numeric): Current balance (default: 0)
+- `created_at` (timestamp): Creation timestamp
+- `updated_at` (timestamp): Last update timestamp
+
+### 11. Payments
+
+- `id` (bigint, PK): Payment ID
+- `customer_id` (bigint, FK): Reference to customers
+- `sale_id` (bigint, FK): Optional reference to sales
+- `amount` (numeric): Payment amount
+- `payment_date` (date): Date of payment
+- `payment_type` (text): Type of payment
+- `payment_method` (text): Optional payment method
+- `reference_no` (text): Optional reference number
+- `notes` (text): Optional notes
+- `created_at` (timestamp): Creation timestamp
+
+## Functions and Triggers
 
 ### Stock Management
 
 1. `update_location_quantities()`: Trigger function for location stock updates
 2. `update_product_quantity(p_id bigint, qty integer)`: Updates product quantities
 3. `update_timestamp()`: Trigger for timestamp updates
+4. `update_location_quantity(p_product_id int, p_location_id int, p_quantity int)`: Updates location-specific quantities
 
 ### Transaction Management
 
 1. `record_transfer(p_product_id int, p_from_location_id int, p_to_location_id int, p_quantity int, p_transfer_date date, p_notes text)`: Records product transfers
 2. `record_production(p_process text, p_quantity int, p_production_date date)`: Records production entries
 3. `handle_purchase()`: Trigger for purchase processing
+
+### Customer Management
+
+1. `update_customer_on_sale()`: Trigger to update customer balances after sales
+2. `update_customer_on_payment()`: Trigger to update customer balances after payments
 
 ### Reversal Functions
 

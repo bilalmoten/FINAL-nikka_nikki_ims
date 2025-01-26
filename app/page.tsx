@@ -31,11 +31,24 @@ import {
   TooltipTrigger,
   TooltipProvider,
 } from "@/components/ui/tooltip";
+import { useQuery } from "@tanstack/react-query";
+import { createBrowserClient } from "@supabase/ssr";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { CardDescription } from "@/components/ui/card";
 
 interface Product {
   id: number;
   name: string;
   quantity: number;
+}
+
+interface Customer {
+  id: number;
+  name: string;
+  phone: string;
+  total_sales: number;
+  total_payments: number;
+  current_balance: number;
 }
 
 export default function Dashboard() {
@@ -48,6 +61,42 @@ export default function Dashboard() {
     salesLoading,
     locationsLoading,
   } = useDashboardQuery();
+
+  const supabase = createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  );
+
+  // Add query for customers with outstanding balances
+  const { data: customersWithBalance } = useQuery({
+    queryKey: ["customers_with_balance"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("customers")
+        .select("*")
+        .gt("current_balance", 0)
+        .order("current_balance", { ascending: false });
+      if (error) throw error;
+      return data as Customer[];
+    },
+  });
+
+  // Add query for total receivables
+  const { data: totalReceivables } = useQuery({
+    queryKey: ["total_receivables"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("customers")
+        .select("current_balance")
+        .gt("current_balance", 0);
+      if (error) throw error;
+      return data.reduce(
+        (sum: number, customer: { current_balance: number }) =>
+          sum + customer.current_balance,
+        0
+      );
+    },
+  });
 
   if (productsLoading || salesLoading || locationsLoading) {
     return <DashboardSkeleton />;
@@ -94,11 +143,11 @@ export default function Dashboard() {
   // Get today's date in YYYY-MM-DD format
   const today = new Date().toISOString().split("T")[0];
 
-  // Calculate today's sales
+  // Calculate today's sales with null check
   const todaySales = salesData?.filter((s) => s.sale_date === today) || [];
-  const totalSales = todaySales.reduce((sum, s) => sum + s.price, 0);
+  const totalSales = todaySales.reduce((sum, s) => sum + (s.price || 0), 0);
 
-  // Prepare data for charts
+  // Prepare data for charts with null checks
   const last7Days = Array.from({ length: 7 }, (_, i) => {
     const d = new Date();
     d.setDate(d.getDate() - i);
@@ -110,7 +159,7 @@ export default function Dashboard() {
     sales:
       salesData
         ?.filter((s) => s.sale_date === date)
-        .reduce((sum, s) => sum + s.price, 0) || 0,
+        .reduce((sum, s) => sum + (s.price || 0), 0) || 0,
   }));
 
   return (
@@ -191,6 +240,23 @@ export default function Dashboard() {
               <div className="text-2xl font-bold">${totalSales.toFixed(2)}</div>
               <p className="text-xs text-green-200">
                 {todaySales.length} transactions
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">
+                Total Receivables
+              </CardTitle>
+              <DollarSign className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">
+                ${totalReceivables?.toFixed(2) || "0.00"}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                From {customersWithBalance?.length || 0} customers
               </p>
             </CardContent>
           </Card>
@@ -392,6 +458,127 @@ export default function Dashboard() {
         </div>
 
         <Charts salesChartData={salesChartData} />
+
+        <Tabs defaultValue="overview" className="space-y-4">
+          <TabsList>
+            <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="analytics">Analytics</TabsTrigger>
+            <TabsTrigger value="receivables">Receivables</TabsTrigger>
+          </TabsList>
+          <TabsContent value="overview" className="space-y-4">
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+              {/* Existing cards */}
+
+              {/* Add Receivables Card */}
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium">
+                    Total Receivables
+                  </CardTitle>
+                  <DollarSign className="h-4 w-4 text-muted-foreground" />
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold">
+                    ${totalReceivables?.toFixed(2) || "0.00"}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    From {customersWithBalance?.length || 0} customers
+                  </p>
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Existing content */}
+          </TabsContent>
+
+          {/* Existing tabs content */}
+
+          {/* Add Receivables Tab */}
+          <TabsContent value="receivables" className="space-y-4">
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
+              <Card className="col-span-4">
+                <CardHeader>
+                  <CardTitle>Outstanding Balances</CardTitle>
+                  <CardDescription>
+                    Customers with pending payments
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-8">
+                    {customersWithBalance?.map((customer) => (
+                      <div key={customer.id} className="flex items-center">
+                        <div className="ml-4 space-y-1">
+                          <p className="text-sm font-medium leading-none">
+                            {customer.name}
+                          </p>
+                          <p className="text-sm text-muted-foreground">
+                            {customer.phone}
+                          </p>
+                        </div>
+                        <div className="ml-auto font-medium">
+                          ${customer.current_balance.toFixed(2)}
+                        </div>
+                      </div>
+                    ))}
+                    {(!customersWithBalance ||
+                      customersWithBalance.length === 0) && (
+                      <div className="text-center text-muted-foreground">
+                        No outstanding balances
+                      </div>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+              <Card className="col-span-3">
+                <CardHeader>
+                  <CardTitle>Receivables Summary</CardTitle>
+                  <CardDescription>
+                    Overview of customer payments
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-8">
+                    <div className="flex items-center">
+                      <div className="space-y-1">
+                        <p className="text-sm font-medium leading-none">
+                          Total Outstanding
+                        </p>
+                      </div>
+                      <div className="ml-auto font-medium">
+                        ${totalReceivables?.toFixed(2) || "0.00"}
+                      </div>
+                    </div>
+                    <div className="flex items-center">
+                      <div className="space-y-1">
+                        <p className="text-sm font-medium leading-none">
+                          Customers with Balance
+                        </p>
+                      </div>
+                      <div className="ml-auto font-medium">
+                        {customersWithBalance?.length || 0}
+                      </div>
+                    </div>
+                    <div className="flex items-center">
+                      <div className="space-y-1">
+                        <p className="text-sm font-medium leading-none">
+                          Average Balance
+                        </p>
+                      </div>
+                      <div className="ml-auto font-medium">
+                        $
+                        {customersWithBalance?.length
+                          ? (
+                              totalReceivables! / customersWithBalance.length
+                            ).toFixed(2)
+                          : "0.00"}
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </TabsContent>
+        </Tabs>
       </div>
     </TooltipProvider>
   );

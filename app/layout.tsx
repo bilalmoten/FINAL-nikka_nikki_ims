@@ -13,6 +13,54 @@ export const metadata: Metadata = {
   description: "Inventory Management System",
 };
 
+const sidebarNavItems = [
+  {
+    title: "Dashboard",
+    href: "/",
+    icon: "dashboard",
+  },
+  {
+    title: "Sales",
+    href: "/sales",
+    icon: "sales",
+  },
+  {
+    title: "Customers",
+    href: "/customers",
+    icon: "users",
+  },
+  {
+    title: "Inventory",
+    href: "/inventory",
+    icon: "inventory",
+  },
+  {
+    title: "Production",
+    href: "/production",
+    icon: "production",
+  },
+  {
+    title: "Transfers",
+    href: "/transfers",
+    icon: "transfer",
+  },
+  {
+    title: "Purchases",
+    href: "/purchases",
+    icon: "purchase",
+  },
+  {
+    title: "Wastage",
+    href: "/wastage",
+    icon: "wastage",
+  },
+  {
+    title: "Activities",
+    href: "/recent-activities",
+    icon: "activity",
+  },
+];
+
 export default function RootLayout({
   children,
 }: {
@@ -26,70 +74,16 @@ export default function RootLayout({
             <nav className="w-64 bg-white shadow-md p-6 flex flex-col">
               <h1 className="text-2xl font-bold mb-6">Nikka Nikki</h1>
               <ul className="space-y-2 mb-6">
-                <li>
-                  <Link
-                    href="/"
-                    className="block py-2 px-4 rounded hover:bg-gray-200"
-                  >
-                    Dashboard
-                  </Link>
-                </li>
-                <li>
-                  <Link
-                    href="/inventory"
-                    className="block py-2 px-4 rounded hover:bg-gray-200"
-                  >
-                    Detailed Inventory
-                  </Link>
-                </li>
-                <li>
-                  <Link
-                    href="/recent-activities"
-                    className="block py-2 px-4 rounded hover:bg-gray-200"
-                  >
-                    Recent Activities
-                  </Link>
-                </li>
-                <li>
-                  <Link
-                    href="/purchases"
-                    className="block py-2 px-4 rounded hover:bg-gray-200"
-                  >
-                    Record Purchase
-                  </Link>
-                </li>
-                <li>
-                  <Link
-                    href="/sales"
-                    className="block py-2 px-4 rounded hover:bg-gray-200"
-                  >
-                    Record Sale
-                  </Link>
-                </li>
-                <li>
-                  <Link
-                    href="/production"
-                    className="block py-2 px-4 rounded hover:bg-gray-200"
-                  >
-                    Record Production
-                  </Link>
-                </li>
-                <li>
-                  <Link
-                    href="/transfers"
-                    className="block py-2 px-4 rounded hover:bg-gray-200"
-                  >
-                    Record Transfer
-                  </Link>
-                </li>
-                <li>
-                  <Link
-                    href="/wastage"
-                    className="block py-2 px-4 rounded hover:bg-gray-200"
-                  >
-                    Record Wastage
-                  </Link>
-                </li>
+                {sidebarNavItems.map((item) => (
+                  <li key={item.title}>
+                    <Link
+                      href={item.href}
+                      className="block py-2 px-4 rounded hover:bg-gray-200"
+                    >
+                      {item.title}
+                    </Link>
+                  </li>
+                ))}
               </ul>
               <div className="mt-auto">
                 <CartonCalculator />

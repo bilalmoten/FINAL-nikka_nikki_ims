@@ -86,6 +86,7 @@ interface SaleItem {
 interface Sale {
   id: number;
   invoice_number: string;
+  customer_id?: number;
   buyer_name: string;
   contact_no?: string;
   sale_date: string;
@@ -93,6 +94,7 @@ interface Sale {
   bill_discount_amount?: number;
   total_amount: number;
   final_amount: number;
+  payment_received: number;
   notes?: string;
   items: SaleItem[];
   product?: Product;
@@ -123,6 +125,17 @@ interface StockByLocation {
   [key: number]: Product[];
 }
 
+// Add customer interface
+interface Customer {
+  id: number;
+  name: string;
+  phone: string;
+  address: string;
+  total_sales: number;
+  total_payments: number;
+  current_balance: number;
+}
+
 // Schema for individual sale item
 const saleItemSchema = z.object({
   product_id: z.string({
@@ -140,6 +153,9 @@ const saleItemSchema = z.object({
 
 // Main form schema
 const formSchema = z.object({
+  customer_id: z.string({
+    required_error: "Please select a customer.",
+  }),
   buyer_name: z.string(),
   contact_no: z.string().optional(),
   sale_date: z.date(),
@@ -148,6 +164,7 @@ const formSchema = z.object({
   bill_discount_amount: z.string().optional(),
   print_receipt: z.boolean().default(false),
   credit_sale: z.boolean().default(false),
+  payment_received: z.string().optional(),
   items: z.array(
     z.object({
       product_id: z.string(),
@@ -291,15 +308,30 @@ export default function SalesPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const ITEMS_PER_PAGE = 10;
 
+  // Add customer query
+  const { data: customers } = useQuery({
+    queryKey: ["customers"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("customers")
+        .select("*")
+        .order("name");
+      if (error) throw error;
+      return data as Customer[];
+    },
+  });
+
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: {
+      customer_id: "",
       buyer_name: "",
       contact_no: "",
       sale_date: new Date(),
       notes: "",
       print_receipt: false,
       credit_sale: false,
+      payment_received: "",
       items: [
         {
           product_id: "",
@@ -395,13 +427,13 @@ export default function SalesPage() {
         `);
       if (error) throw error;
 
-      // Transform into the expected format
+      // Transform into the expected format with null checks
       const stockByLocation = locations?.reduce((acc, location) => {
         acc[location.id] =
           products?.map((product) => {
             const locationProduct = locationProducts?.find(
               (lp) =>
-                lp.location_id === location.id && lp.product_id === product.id
+                lp?.location_id === location.id && lp?.product_id === product.id
             );
             return {
               ...product,
@@ -411,20 +443,20 @@ export default function SalesPage() {
         return acc;
       }, {} as StockByLocation);
 
-      return stockByLocation;
+      return stockByLocation || {};
     },
     enabled: !!locations && !!products,
   });
 
-  // Organize products into ready and other
+  // Organize products into ready and other with null checks
   const readyProducts =
     products?.filter(
-      (p) => p.name.includes("Ready") || p.name === "Gift Set"
+      (p) => p?.name?.includes("Ready") || p?.name === "Gift Set"
     ) || [];
 
   const otherProducts =
     products?.filter(
-      (p) => !p.name.includes("Ready") && p.name !== "Gift Set"
+      (p) => !p?.name?.includes("Ready") && p?.name !== "Gift Set"
     ) || [];
 
   // Fetch recent sales
@@ -454,11 +486,32 @@ export default function SalesPage() {
   const recordSale = useMutation({
     mutationFn: async (values: z.infer<typeof formSchema>) => {
       try {
+        let customerId = values.customer_id;
+
+        // If no customer is selected but we have a buyer name, create a new customer
+        if (!customerId && values.buyer_name) {
+          const { data: newCustomer, error: customerError } = await supabase
+            .from("customers")
+            .insert({
+              name: values.buyer_name,
+              phone: values.contact_no || null,
+              total_sales: 0,
+              total_payments: 0,
+              current_balance: 0,
+            })
+            .select()
+            .single();
+
+          if (customerError) throw customerError;
+          customerId = newCustomer.id.toString();
+        }
+
         // Start a Supabase transaction
         const { data: saleData, error: saleError } = await supabase
           .from("sales")
           .insert({
             invoice_number: `INV-${Date.now()}`,
+            customer_id: customerId ? parseInt(customerId) : null,
             buyer_name: values.buyer_name,
             contact_no: values.contact_no,
             sale_date: values.sale_date.toISOString().split("T")[0],
@@ -470,6 +523,9 @@ export default function SalesPage() {
               : null,
             total_amount: totalAmount,
             final_amount: finalAmount,
+            payment_received: values.payment_received
+              ? parseFloat(values.payment_received)
+              : 0,
             notes: values.notes,
             credit_sale: values.credit_sale,
           })
@@ -587,6 +643,7 @@ export default function SalesPage() {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["products"] });
       queryClient.invalidateQueries({ queryKey: ["locationProducts"] });
+      queryClient.invalidateQueries({ queryKey: ["customers"] });
       toast({
         title: "Sale recorded successfully",
         description: `Invoice number: ${data.invoice_number}`,
@@ -877,12 +934,14 @@ export default function SalesPage() {
   // Add reset handler
   const handleReset = () => {
     form.reset({
+      customer_id: "",
       buyer_name: "",
       contact_no: "",
       sale_date: new Date(),
       notes: "",
       print_receipt: false,
       credit_sale: false,
+      payment_received: "",
       items: [
         {
           product_id: "",
@@ -899,13 +958,17 @@ export default function SalesPage() {
 
   // Add these functions near the top of the component
   const loadSaleToForm = (sale: Sale, isEdit: boolean = false) => {
+    if (!sale || !sale.items) return;
+
     form.reset({
+      customer_id: sale.customer_id?.toString() || "",
       buyer_name: sale.buyer_name,
       contact_no: sale.contact_no || "",
       sale_date: new Date(sale.sale_date),
       notes: sale.notes || "",
       print_receipt: false,
       credit_sale: sale.credit_sale,
+      payment_received: sale.payment_received?.toString() || "0",
       bill_discount_percentage: sale.bill_discount_percentage?.toString() || "",
       bill_discount_amount: sale.bill_discount_amount?.toString() || "",
       items: sale.items.map((item) => ({
@@ -938,6 +1001,7 @@ export default function SalesPage() {
           .from("sales")
           .insert({
             invoice_number: editingInvoiceNumber, // Use the original invoice number
+            customer_id: parseInt(values.customer_id),
             buyer_name: values.buyer_name,
             contact_no: values.contact_no,
             sale_date: values.sale_date.toISOString().split("T")[0],
@@ -949,6 +1013,9 @@ export default function SalesPage() {
               : null,
             total_amount: totalAmount,
             final_amount: finalAmount,
+            payment_received: values.payment_received
+              ? parseFloat(values.payment_received)
+              : 0,
             notes: values.notes,
             credit_sale: values.credit_sale,
           })
@@ -1037,6 +1104,16 @@ export default function SalesPage() {
     string | null
   >(null);
 
+  // Add customer selection handler
+  const handleCustomerSelect = (customerId: string) => {
+    const customer = customers?.find((c) => c.id.toString() === customerId);
+    if (customer) {
+      form.setValue("customer_id", customerId);
+      form.setValue("buyer_name", customer.name);
+      form.setValue("contact_no", customer.phone || "");
+    }
+  };
+
   // Update the submit handler
   function onSubmit(values: z.infer<typeof formSchema>) {
     if (editingSaleId) {
@@ -1056,6 +1133,45 @@ export default function SalesPage() {
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-4">
+              <FormField
+                control={form.control}
+                name="customer_id"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Customer</FormLabel>
+                    <Select
+                      onValueChange={(value) => {
+                        handleCustomerSelect(value);
+                        field.onChange(value);
+                      }}
+                      defaultValue={field.value}
+                    >
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select customer" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {customers?.map((customer) => (
+                          <SelectItem
+                            key={customer.id}
+                            value={customer.id.toString()}
+                          >
+                            <div className="flex justify-between items-center gap-4">
+                              <span>{customer.name}</span>
+                              <span className="text-muted-foreground">
+                                Balance: ${customer.current_balance.toFixed(2)}
+                              </span>
+                            </div>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
               <FormField
                 control={form.control}
                 name="buyer_name"
@@ -1135,6 +1251,27 @@ export default function SalesPage() {
                         </PopoverContent>
                       </Popover>
                     </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="payment_received"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Payment Received</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="number"
+                        placeholder="Enter payment amount"
+                        {...field}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      Leave empty for full credit sale
+                    </FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -1228,7 +1365,7 @@ export default function SalesPage() {
                               )
                                 ? locationStock.find(
                                     (p) =>
-                                      p.id ===
+                                      p?.id ===
                                       parseInt(
                                         form.watch(`items.${index}.product_id`)
                                       )
@@ -1673,16 +1810,16 @@ export default function SalesPage() {
                 <CollapsibleContent>
                   <div className="px-4 pb-4">
                     <div className="space-y-2">
-                      {sale.items.map((item) => (
+                      {sale.items?.map((item) => (
                         <div
                           key={item.id}
                           className="flex justify-between items-center py-2 border-t first:border-t-0"
                         >
                           <div>
-                            <p className="font-medium">{item.product.name}</p>
+                            <p className="font-medium">{item.product?.name}</p>
                             <p className="text-sm text-muted-foreground">
                               {item.quantity} × $
-                              {item.price_per_unit.toFixed(2)}
+                              {item.price_per_unit?.toFixed(2)}
                             </p>
                             {item.trade_scheme && (
                               <p className="text-sm text-muted-foreground">
