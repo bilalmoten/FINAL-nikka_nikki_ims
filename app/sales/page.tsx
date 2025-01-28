@@ -60,6 +60,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { Checkbox } from "@/components/ui/checkbox";
+import { findPriceRule } from "@/lib/product-presets";
 
 interface Product {
   id: number;
@@ -101,6 +102,7 @@ interface Sale {
   quantity?: number;
   price?: number;
   credit_sale: boolean;
+  created_at?: string;
 }
 
 interface Transfer {
@@ -319,7 +321,7 @@ function SalesSkeleton() {
 export default function SalesPage() {
   const [totalAmount, setTotalAmount] = useState(0);
   const [finalAmount, setFinalAmount] = useState(0);
-  const [isOpen, setIsOpen] = useState(false);
+  const [isOpen, setIsOpen] = useState(true);
   const { toast } = useToast();
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -369,6 +371,24 @@ export default function SalesPage() {
 
   // Watch form values for calculations
   const formValues = form.watch();
+
+  // Add handlePriceCalculation function
+  const handlePriceCalculation = (price: string, quantity: string) => {
+    if (!price || !quantity) return;
+
+    const numericPrice = parseFloat(price);
+    const numericQuantity = parseInt(quantity);
+
+    if (isNaN(numericPrice) || isNaN(numericQuantity)) return;
+
+    // Calculate totals
+    const total = numericPrice * numericQuantity;
+    setTotalAmount(total);
+    setFinalAmount(total);
+
+    // Update form calculations
+    form.trigger("items");
+  };
 
   // Calculate totals when form values change
   useEffect(() => {
@@ -509,22 +529,35 @@ export default function SalesPage() {
       try {
         let customerId = values.customer_id;
 
-        // If no customer is selected but we have a buyer name, create a new customer
+        // If no customer is selected but we have a buyer name
         if (!customerId && values.buyer_name) {
-          const { data: newCustomer, error: customerError } = await supabase
-            .from("customers")
-            .insert({
-              name: values.buyer_name,
-              phone: values.contact_no || null,
-              total_sales: 0,
-              total_payments: 0,
-              current_balance: 0,
-            })
-            .select()
-            .single();
+          // First check if a customer with this name already exists
+          const existingCustomer = customers?.find(
+            (c) =>
+              c.name.toLowerCase().trim() ===
+              values.buyer_name.toLowerCase().trim()
+          );
 
-          if (customerError) throw customerError;
-          customerId = newCustomer.id.toString();
+          if (existingCustomer) {
+            // Use existing customer
+            customerId = existingCustomer.id.toString();
+          } else {
+            // Create new customer only if no match found
+            const { data: newCustomer, error: customerError } = await supabase
+              .from("customers")
+              .insert({
+                name: values.buyer_name.trim(),
+                phone: values.contact_no || null,
+                total_sales: 0,
+                total_payments: 0,
+                current_balance: 0,
+              })
+              .select()
+              .single();
+
+            if (customerError) throw customerError;
+            customerId = newCustomer.id.toString();
+          }
         }
 
         // Start a Supabase transaction
@@ -710,6 +743,21 @@ export default function SalesPage() {
   });
 
   function printReceipt(saleData: Sale) {
+    // Find customer's current balance
+    const customer = customers?.find((c) => c.id === saleData.customer_id);
+
+    // If this is a reprint (i.e., sale already exists in customer's balance)
+    // we need to subtract this sale's amount from the current balance to show the correct previous balance
+    const isReprint =
+      saleData.created_at &&
+      new Date(saleData.created_at).getTime() < Date.now() - 1000; // More than 1 second old
+    const previousBalance = customer?.current_balance
+      ? isReprint
+        ? customer.current_balance -
+          (saleData.credit_sale ? saleData.final_amount : 0)
+        : customer.current_balance
+      : 0;
+
     const receiptContent = `
       <div style="font-family: Arial, sans-serif; padding: 40px; max-width: 800px; margin: 0 auto;">
         <!-- Header -->
@@ -839,7 +887,9 @@ export default function SalesPage() {
             <table style="width: 100%; border-collapse: collapse;">
               <tr style="background-color: #f5f5f5;">
                 <td style="padding: 8px;">Previous Total Rs.:</td>
-                <td style="padding: 8px; text-align: right;">24,667.00</td>
+                <td style="padding: 8px; text-align: right;">${previousBalance.toFixed(
+                  2
+                )}</td>
               </tr>
               ${
                 saleData.credit_sale
@@ -853,18 +903,22 @@ export default function SalesPage() {
               <tr>
                 <td style="padding: 8px;">Total Balance Rs.:</td>
                 <td style="padding: 8px; text-align: right;">${(
-                  24667.0 + saleData.final_amount
+                  previousBalance + saleData.final_amount
                 ).toFixed(2)}</td>
               </tr>
               `
                   : `
               <tr>
                 <td style="padding: 8px;">Cash Balance Rs.:</td>
-                <td style="padding: 8px; text-align: right;">0.00</td>
+                <td style="padding: 8px; text-align: right;">${previousBalance.toFixed(
+                  2
+                )}</td>
               </tr>
               <tr>
                 <td style="padding: 8px;">Total Receivable Rs.:</td>
-                <td style="padding: 8px; text-align: right;">24,667.00</td>
+                <td style="padding: 8px; text-align: right;">${previousBalance.toFixed(
+                  2
+                )}</td>
               </tr>
               `
               }
@@ -1218,6 +1272,320 @@ export default function SalesPage() {
                 )}
               />
 
+              {/* Add Excel Paste Area */}
+              <Card>
+                <CardHeader className="py-3">
+                  <div className="flex justify-between items-center">
+                    <CardTitle className="text-sm font-medium">
+                      Quick Excel Paste
+                    </CardTitle>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setIsOpen(!isOpen)}
+                      className="h-8"
+                    >
+                      {isOpen ? "Hide" : "Show"}
+                    </Button>
+                  </div>
+                </CardHeader>
+                {isOpen && (
+                  <CardContent>
+                    <div className="space-y-4">
+                      <FormItem>
+                        <FormLabel>Paste Excel Data</FormLabel>
+                        <FormControl>
+                          <textarea
+                            className="w-full min-h-[100px] p-2 border rounded-md font-mono text-sm"
+                            placeholder="Paste your Excel data here..."
+                            onChange={(e) => {
+                              const data = e.target.value;
+                              try {
+                                // Split into rows and clean empty rows
+                                const rows = data
+                                  .trim()
+                                  .split("\n")
+                                  .map((row) =>
+                                    row.split("\t").map((cell) => cell.trim())
+                                  )
+                                  .filter((row) =>
+                                    row.some((cell) => cell !== "")
+                                  );
+
+                                if (rows.length === 0) return;
+
+                                // Parse first row (header row)
+                                const firstRow = rows[0];
+                                const serialNo = firstRow[0] || ""; // S.No for notes
+                                const date = firstRow[1] || "";
+                                const buyerName = firstRow[2] || "";
+
+                                // Initialize items array for all products
+                                const saleItems: Array<{
+                                  product_id: string;
+                                  location_id: string;
+                                  quantity: string;
+                                  price_per_unit: string;
+                                  trade_scheme: string;
+                                  discount_percentage: string;
+                                  discount_amount: string;
+                                }> = [];
+
+                                // Process all rows for products (including first row and subsequent rows)
+                                for (let i = 0; i < rows.length - 1; i++) {
+                                  // -1 to exclude the last total row
+                                  const row = rows[i];
+                                  const productName = row[3] || ""; // Product name is in column 4
+                                  const quantity = row[4] || ""; // Quantity is in column 5
+                                  const price = row[5] || ""; // Price is in column 6
+
+                                  // Only add if we have a product
+                                  if (
+                                    productName &&
+                                    quantity &&
+                                    price &&
+                                    !productName.toLowerCase().includes("total")
+                                  ) {
+                                    // Find product ID based on name
+                                    let matchedProduct = null;
+                                    if (productName) {
+                                      console.log(
+                                        "Trying to match product:",
+                                        productName
+                                      );
+                                      console.log(
+                                        "Available products:",
+                                        products?.map((p) => ({
+                                          id: p.id,
+                                          name: p.name,
+                                        }))
+                                      );
+
+                                      // Special handling for Gift Set
+                                      if (
+                                        productName
+                                          .toLowerCase()
+                                          .includes("gift set")
+                                      ) {
+                                        matchedProduct = products?.find((p) =>
+                                          p.name
+                                            .toLowerCase()
+                                            .includes("gift set")
+                                        );
+
+                                        // Apply product presets if found
+                                        if (matchedProduct) {
+                                          const priceRule = findPriceRule(
+                                            "Nikka Nikki Gift Set 4 Pcs",
+                                            parseFloat(price)
+                                          );
+
+                                          if (priceRule) {
+                                            saleItems.push({
+                                              product_id:
+                                                matchedProduct.id.toString(),
+                                              location_id: "1", // Default location
+                                              quantity: quantity,
+                                              price_per_unit:
+                                                priceRule.basePrice.toString(),
+                                              trade_scheme:
+                                                priceRule.tradeScheme,
+                                              discount_percentage:
+                                                priceRule.discountPercentage.toString(),
+                                              discount_amount: "",
+                                            });
+                                            continue;
+                                          }
+                                        }
+                                      } else {
+                                        // Try exact match first
+                                        matchedProduct = products?.find(
+                                          (p) => p.name === productName
+                                        );
+                                        console.log(
+                                          "Exact match attempt:",
+                                          matchedProduct
+                                        );
+
+                                        // If no exact match, try case-insensitive match
+                                        if (!matchedProduct) {
+                                          matchedProduct = products?.find(
+                                            (p) =>
+                                              p.name.toLowerCase() ===
+                                              productName.toLowerCase()
+                                          );
+                                          console.log(
+                                            "Case-insensitive match attempt:",
+                                            matchedProduct
+                                          );
+                                        }
+
+                                        // If still no match, try includes
+                                        if (!matchedProduct) {
+                                          matchedProduct = products?.find(
+                                            (p) =>
+                                              p.name
+                                                .toLowerCase()
+                                                .includes(
+                                                  productName.toLowerCase()
+                                                ) ||
+                                              productName
+                                                .toLowerCase()
+                                                .includes(p.name.toLowerCase())
+                                          );
+                                          console.log(
+                                            "Includes match attempt:",
+                                            matchedProduct
+                                          );
+                                        }
+                                      }
+
+                                      if (matchedProduct) {
+                                        console.log(
+                                          "Found matching product:",
+                                          matchedProduct
+                                        );
+                                        const saleItem = {
+                                          product_id:
+                                            matchedProduct.id.toString(),
+                                          location_id: "1", // Default location
+                                          quantity: quantity,
+                                          price_per_unit: price,
+                                          trade_scheme: "",
+                                          discount_percentage: "",
+                                          discount_amount: "",
+                                        };
+
+                                        saleItems.push(saleItem);
+                                        console.log(
+                                          "Added sale item:",
+                                          saleItem
+                                        );
+                                      } else {
+                                        console.warn(
+                                          `No match found for product: "${productName}"`
+                                        );
+                                      }
+                                    }
+                                  }
+                                }
+
+                                // Process last row for bill details
+                                const lastRow = rows[rows.length - 1];
+                                const billDiscountAmount = lastRow[7] || "0"; // Column 8
+                                const paymentReceived = lastRow[8] || "0"; // Column 9
+                                const isCredit =
+                                  parseFloat(paymentReceived) === 0;
+
+                                // Update form with all gathered data
+                                if (buyerName) {
+                                  form.setValue("buyer_name", buyerName);
+                                }
+
+                                if (date) {
+                                  try {
+                                    const parsedDate = new Date(date);
+                                    if (!isNaN(parsedDate.getTime())) {
+                                      form.setValue("sale_date", parsedDate);
+                                    }
+                                  } catch (error) {
+                                    console.error("Date parsing error:", error);
+                                  }
+                                }
+
+                                // Set items only if we have valid items
+                                if (saleItems.length > 0) {
+                                  console.log("Setting form items:", saleItems);
+
+                                  // First clear existing items
+                                  form.setValue("items", []);
+
+                                  // Then set new items one by one
+                                  saleItems.forEach((item, index) => {
+                                    // Set the entire item first
+                                    form.setValue(`items.${index}`, item);
+
+                                    // Then explicitly set product_id and location_id
+                                    form.setValue(
+                                      `items.${index}.product_id`,
+                                      item.product_id
+                                    );
+                                    form.setValue(
+                                      `items.${index}.location_id`,
+                                      item.location_id
+                                    );
+
+                                    console.log(`Set item ${index}:`, {
+                                      formValue: form.getValues(
+                                        `items.${index}`
+                                      ),
+                                      productId: form.getValues(
+                                        `items.${index}.product_id`
+                                      ),
+                                    });
+                                  });
+                                }
+
+                                // Set bill details
+                                if (billDiscountAmount) {
+                                  form.setValue(
+                                    "bill_discount_amount",
+                                    billDiscountAmount
+                                  );
+                                }
+
+                                if (paymentReceived) {
+                                  form.setValue(
+                                    "payment_received",
+                                    paymentReceived
+                                  );
+                                }
+
+                                form.setValue("credit_sale", isCredit);
+
+                                if (serialNo) {
+                                  form.setValue("notes", `S.No: ${serialNo}`);
+                                }
+
+                                // Clear textarea
+                                // e.target.value = "";
+
+                                // Show success message
+                                toast({
+                                  title: "Data parsed successfully",
+                                  description: `${saleItems.length} items added for ${buyerName}`,
+                                });
+
+                                // Trigger calculations for all items
+                                saleItems.forEach((item) => {
+                                  handlePriceCalculation(
+                                    item.price_per_unit,
+                                    item.quantity
+                                  );
+                                });
+                              } catch (error) {
+                                console.error("Parsing error:", error);
+                                toast({
+                                  variant: "destructive",
+                                  title: "Error parsing data",
+                                  description:
+                                    "Please ensure you've copied all columns from Excel correctly",
+                                });
+                              }
+                            }}
+                          />
+                        </FormControl>
+                        <FormDescription>
+                          Paste your Excel data including all rows and columns
+                          (S.No, Date, Buyer, Products, Quantities, Prices, and
+                          Totals)
+                        </FormDescription>
+                      </FormItem>
+                    </div>
+                  </CardContent>
+                )}
+              </Card>
+
               <FormField
                 control={form.control}
                 name="sale_date"
@@ -1229,14 +1597,24 @@ export default function SalesPage() {
                         type="date"
                         value={
                           field.value
-                            ? field.value.toISOString().split("T")[0]
+                            ? new Date(
+                                field.value.getTime() -
+                                  field.value.getTimezoneOffset() * 60000
+                              )
+                                .toISOString()
+                                .split("T")[0]
                             : ""
                         }
                         onChange={(e) => {
-                          const date = e.target.value
+                          const inputDate = e.target.value
                             ? new Date(e.target.value)
                             : new Date();
-                          field.onChange(date);
+                          // Adjust for timezone
+                          const adjustedDate = new Date(
+                            inputDate.getTime() +
+                              inputDate.getTimezoneOffset() * 60000
+                          );
+                          field.onChange(adjustedDate);
                         }}
                       />
                       <Popover>
@@ -1261,6 +1639,7 @@ export default function SalesPage() {
                             mode="single"
                             selected={field.value}
                             onSelect={field.onChange}
+                            defaultMonth={field.value || new Date()}
                             disabled={(date) =>
                               date > new Date() || date < new Date("1900-01-01")
                             }
