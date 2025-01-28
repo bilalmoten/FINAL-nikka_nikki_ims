@@ -152,33 +152,54 @@ const saleItemSchema = z.object({
 });
 
 // Main form schema
-const formSchema = z.object({
-  customer_id: z.string({
-    required_error: "Please select a customer.",
-  }),
-  buyer_name: z.string(),
-  contact_no: z.string().optional(),
-  sale_date: z.date(),
-  notes: z.string().optional(),
-  bill_discount_percentage: z.string().optional(),
-  bill_discount_amount: z.string().optional(),
-  print_receipt: z.boolean().default(false),
-  credit_sale: z.boolean().default(false),
-  payment_received: z.string().optional(),
-  items: z.array(
-    z.object({
-      product_id: z.string(),
-      location_id: z.string(),
-      quantity: z.string(),
-      price_per_unit: z.string(),
-      trade_scheme: z.string().optional(),
-      discount_percentage: z.string().optional(),
-      discount_amount: z.string().optional(),
-    })
-  ),
-});
+const formSchema = z
+  .object({
+    customer_id: z.string({
+      required_error: "Please select a customer.",
+    }),
+    buyer_name: z.string().min(1, "Buyer name is required"),
+    contact_no: z.string().optional(),
+    sale_date: z.date(),
+    notes: z.string().optional(),
+    bill_discount_percentage: z.string().optional(),
+    bill_discount_amount: z.string().optional(),
+    print_receipt: z.boolean().default(false),
+    credit_sale: z.boolean().default(false),
+    payment_received: z.string().optional(),
+    items: z.array(
+      z.object({
+        product_id: z.string(),
+        location_id: z.string(),
+        quantity: z.string(),
+        price_per_unit: z.string(),
+        trade_scheme: z.string().optional(),
+        discount_percentage: z.string().optional(),
+        discount_amount: z.string().optional(),
+      })
+    ),
+  })
+  .refine(
+    (data) => {
+      // If credit_sale is true, payment_received must be 0 or empty
+      if (data.credit_sale) {
+        return (
+          !data.payment_received || parseFloat(data.payment_received) === 0
+        );
+      }
+      return true;
+    },
+    {
+      message: "Credit sales cannot have payment received",
+      path: ["payment_received"],
+    }
+  );
 
 type FormValues = z.infer<typeof formSchema>;
+
+interface UpdateSaleParams {
+  id: number;
+  data: FormValues;
+}
 
 // Helper function to calculate trade scheme discount
 function calculateTradeSchemeDiscount(
@@ -665,7 +686,7 @@ export default function SalesPage() {
   const deleteSale = useMutation({
     mutationFn: async (id: number) => {
       const { error } = await supabase.rpc("reverse_sale", {
-        sale_id: id,
+        sale_id: id, // Use the exact parameter name from SQL function
       });
       if (error) throw error;
     },
@@ -777,7 +798,7 @@ export default function SalesPage() {
                 const qtyDisplay = item.product.name
                   .toLowerCase()
                   .includes("gift set")
-                  ? `${item.quantity} Ctn`
+                  ? `${item.quantity} Pcs`
                   : `${item.quantity} Pcs`;
 
                 return `
@@ -987,92 +1008,63 @@ export default function SalesPage() {
   };
 
   const updateSale = useMutation({
-    mutationFn: async (values: z.infer<typeof formSchema>) => {
-      try {
-        // First delete the old sale
-        const { error: deleteError } = await supabase.rpc("reverse_sale", {
-          sale_id: editingSaleId,
-        });
+    mutationFn: async ({ id, data }: UpdateSaleParams) => {
+      // First update the sale
+      const { error: saleError } = await supabase
+        .from("sales")
+        .update({
+          customer_id: data.customer_id ? parseInt(data.customer_id) : null,
+          buyer_name: data.buyer_name,
+          contact_no: data.contact_no,
+          sale_date: data.sale_date.toISOString(),
+          notes: data.notes,
+          bill_discount_percentage: data.bill_discount_percentage
+            ? parseFloat(data.bill_discount_percentage)
+            : null,
+          bill_discount_amount: data.bill_discount_amount
+            ? parseFloat(data.bill_discount_amount)
+            : null,
+          credit_sale: data.credit_sale,
+          payment_received: data.payment_received
+            ? parseFloat(data.payment_received)
+            : 0,
+        })
+        .eq("id", id);
 
-        if (deleteError) throw deleteError;
+      if (saleError) throw saleError;
 
-        // Then create a new sale with the same invoice number
-        const { data: saleData, error: saleError } = await supabase
-          .from("sales")
-          .insert({
-            invoice_number: editingInvoiceNumber, // Use the original invoice number
-            customer_id: parseInt(values.customer_id),
-            buyer_name: values.buyer_name,
-            contact_no: values.contact_no,
-            sale_date: values.sale_date.toISOString().split("T")[0],
-            bill_discount_percentage: values.bill_discount_percentage
-              ? parseFloat(values.bill_discount_percentage)
+      // Then update each sale item
+      for (const item of data.items) {
+        const { error: itemError } = await supabase
+          .from("sale_items")
+          .update({
+            product_id: parseInt(item.product_id),
+            location_id: parseInt(item.location_id),
+            quantity: parseInt(item.quantity),
+            price_per_unit: parseFloat(item.price_per_unit),
+            trade_scheme: item.trade_scheme,
+            discount_percentage: item.discount_percentage
+              ? parseFloat(item.discount_percentage)
               : null,
-            bill_discount_amount: values.bill_discount_amount
-              ? parseFloat(values.bill_discount_amount)
+            discount_amount: item.discount_amount
+              ? parseFloat(item.discount_amount)
               : null,
-            total_amount: totalAmount,
-            final_amount: finalAmount,
-            payment_received: values.payment_received
-              ? parseFloat(values.payment_received)
-              : 0,
-            notes: values.notes,
-            credit_sale: values.credit_sale,
           })
-          .select()
-          .single();
+          .eq("sale_id", id)
+          .eq("product_id", parseInt(item.product_id));
 
-        if (saleError) throw saleError;
-
-        // Record the updated items
-        for (const item of values.items) {
-          const { totalPrice, finalPrice } = calculateItemFinalPrice(
-            parseInt(item.quantity),
-            parseFloat(item.price_per_unit),
-            item.trade_scheme,
-            item.discount_percentage,
-            item.discount_amount
-          );
-
-          const { error: itemError } = await supabase
-            .from("sale_items")
-            .insert({
-              sale_id: saleData.id,
-              product_id: parseInt(item.product_id),
-              location_id: parseInt(item.location_id),
-              quantity: parseInt(item.quantity),
-              price_per_unit: parseFloat(item.price_per_unit),
-              trade_scheme: item.trade_scheme || null,
-              discount_percentage: item.discount_percentage
-                ? parseFloat(item.discount_percentage)
-                : null,
-              discount_amount: item.discount_amount
-                ? parseFloat(item.discount_amount)
-                : null,
-              total_price: totalPrice,
-              final_price: finalPrice,
-            });
-
-          if (itemError) throw itemError;
-
-          // Update product quantity
-          const { error: updateError } = await supabase.rpc(
-            "update_location_quantity",
-            {
-              p_product_id: parseInt(item.product_id),
-              p_location_id: parseInt(item.location_id),
-              p_quantity: -parseInt(item.quantity),
-            }
-          );
-
-          if (updateError) throw updateError;
-        }
-
-        return saleData;
-      } catch (error) {
-        console.error("Update error:", error);
-        throw error;
+        if (itemError) throw itemError;
       }
+
+      // Fetch and return the updated sale
+      const { data: updatedSale, error: fetchError } = await supabase
+        .from("sales")
+        .select("*")
+        .eq("id", id)
+        .single();
+
+      if (fetchError) throw fetchError;
+      return updatedSale;
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["products"] });
@@ -1082,11 +1074,6 @@ export default function SalesPage() {
         title: "Sale updated successfully",
         description: `Invoice number: ${data.invoice_number}`,
       });
-      setEditingSaleId(null);
-      setEditingInvoiceNumber(null);
-      if (formValues.print_receipt) {
-        printReceipt(data);
-      }
       form.reset();
     },
     onError: (error: Error) => {
@@ -1114,14 +1101,45 @@ export default function SalesPage() {
     }
   };
 
-  // Update the submit handler
-  function onSubmit(values: z.infer<typeof formSchema>) {
-    if (editingSaleId) {
-      updateSale.mutate(values);
-    } else {
-      recordSale.mutate(values);
+  // Add validation for credit sale payment
+  const handleSubmit = async (formValues: FormValues) => {
+    // Validate buyer name
+    if (!formValues.buyer_name?.trim()) {
+      toast({
+        title: "Error",
+        description: "Buyer name is required",
+        variant: "destructive",
+      });
+      return;
     }
-  }
+
+    // Validate credit sale payment
+    if (
+      formValues.credit_sale &&
+      parseFloat(formValues.payment_received || "0") > 0
+    ) {
+      toast({
+        title: "Error",
+        description: "Credit sales cannot have payment received",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // If it's a credit sale, ensure payment_received is 0
+    if (formValues.credit_sale) {
+      formValues.payment_received = "0";
+    }
+
+    if (editingSaleId) {
+      updateSale.mutate({
+        id: editingSaleId,
+        data: formValues,
+      });
+    } else {
+      recordSale.mutate(formValues);
+    }
+  };
 
   if (isLoading || productsLoading || locationsLoading) {
     return <SalesSkeleton />;
@@ -1130,7 +1148,7 @@ export default function SalesPage() {
   return (
     <div className="container mx-auto py-10">
       <Form {...form}>
-        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
+        <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-8">
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-4">
               <FormField

@@ -4,20 +4,54 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ShoppingCart, ArrowUp } from "lucide-react";
+import { ShoppingCart, ArrowUp, Printer } from "lucide-react";
 import { useDashboardQuery } from "@/hooks/use-dashboard-query";
 import { format } from "date-fns";
 import { useQuery } from "@tanstack/react-query";
 import { createBrowserClient } from "@supabase/ssr";
+import { Button } from "@/components/ui/button";
+
+interface SaleItem {
+  id: number;
+  sale_id: number;
+  product_id: number;
+  location_id: number;
+  quantity: number;
+  price_per_unit: number;
+  trade_scheme?: string;
+  discount_percentage?: number;
+  discount_amount?: number;
+  total_price: number;
+  final_price: number;
+  product: {
+    id: number;
+    name: string;
+    quantity: number;
+  };
+  location: {
+    id: number;
+    name: string;
+    address?: string;
+  };
+}
 
 interface Sale {
   id: number;
+  invoice_number: string;
+  customer_id?: number;
+  buyer_name: string;
+  contact_no?: string;
   sale_date: string;
+  bill_discount_percentage?: number;
+  bill_discount_amount?: number;
+  total_amount: number;
+  final_amount: number;
+  payment_received: number;
+  notes?: string;
+  items: SaleItem[];
   price: number;
   quantity: number;
-  final_amount?: number;
-  payment_received?: number;
-  total_amount?: number;
+  credit_sale: boolean;
 }
 
 type Activity = Sale;
@@ -109,6 +143,291 @@ export default function RecentActivities() {
   // Update the spread array with type casting
   const allActivities = [...(salesData || [])] as Activity[];
 
+  // Add function to fetch complete sale data
+  const fetchCompleteSaleData = async (saleId: number) => {
+    const { data, error } = await supabase
+      .from("sales")
+      .select(
+        `
+        *,
+        items:sale_items(
+          *,
+          product:products(*),
+          location:locations(*)
+        )
+      `
+      )
+      .eq("id", saleId)
+      .single();
+
+    if (error) throw error;
+    return data;
+  };
+
+  // Add function to print receipt
+  const printReceipt = async (saleId: number) => {
+    try {
+      const saleData = await fetchCompleteSaleData(saleId);
+      const receiptContent = `
+      <div style="font-family: Arial, sans-serif; padding: 40px; max-width: 800px; margin: 0 auto;">
+        <!-- Header -->
+        <div style="display: flex; justify-content: space-between; margin-bottom: 40px;">
+          <div>
+            <h1 style="color: #EA6AA9; font-size: 32px; margin: 0;">NIKKA NIKKI</h1>
+            <h2 style="color: #59B0E5; font-size: 24px; margin: 5px 0;">NISA COSMETICS</h2>
+            <p style="color: #666; margin: 5px 0;">Plot 10, Sector 16, Korangi Industrial Area</p>
+            <p style="color: #666; margin: 5px 0;">Karachi, Pakistan</p>
+            <p style="color: #666; margin: 5px 0;">Contact: 0333 3066055</p>
+            <p style="color: #666; margin: 5px 0;">Email: nikkanikki.pk@gmail.com</p>
+          </div>
+          <div style="text-align: right;">
+            <h2 style="font-size: 24px; margin: 0; color: #333;">INVOICE</h2>
+            <p style="color: #666; margin: 5px 0;">Invoice #: ${
+              saleData.invoice_number
+            }</p>
+            <p style="color: #666; margin: 5px 0;">Date: ${format(
+              new Date(saleData.sale_date),
+              "PPP"
+            )}</p>
+          </div>
+        </div>
+
+        <!-- Customer Info -->
+        <div style="margin-bottom: 30px;">
+          <div style="background-color: #f5f5f5; padding: 15px; border-radius: 4px;">
+            <h3 style="margin: 0 0 10px 0; color: #333;">Bill To:</h3>
+            <p style="margin: 0; color: #666;">${saleData.buyer_name}</p>
+            ${
+              saleData.contact_no
+                ? `<p style="margin: 5px 0; color: #666;">Contact: ${saleData.contact_no}</p>`
+                : ""
+            }
+          </div>
+        </div>
+
+        <!-- Items Table -->
+        <table style="width: 100%; border-collapse: collapse; margin-bottom: 30px;">
+          <thead>
+            <tr style="background-color: #EA6AA9; color: white;">
+              <th style="padding: 12px; text-align: center; width: 8%;">Qty</th>
+              <th style="padding: 12px; text-align: left; width: 25%;">Description</th>
+              <th style="padding: 12px; text-align: right; width: 10%;">Retail Rate</th>
+              <th style="padding: 12px; text-align: center; width: 8%;">T.S</th>
+              <th style="padding: 12px; text-align: right; width: 10%;">T.S/Pc</th>
+              <th style="padding: 12px; text-align: right; width: 8%;">Disc %</th>
+              <th style="padding: 12px; text-align: right; width: 10%;">Disc/Pc</th>
+              <th style="padding: 12px; text-align: right; width: 10%;">Net Rate</th>
+              <th style="padding: 12px; text-align: right; width: 11%;">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${saleData.items
+              .map((item: SaleItem) => {
+                const productName = item.product.name
+                  .toLowerCase()
+                  .includes("gift set")
+                  ? `${item.product.name} (4 Pcs)`
+                  : item.product.name;
+
+                // Calculate trade scheme discount per piece
+                const tradeSchemeDiscountPerPiece = item.trade_scheme
+                  ? (calculateTradeSchemeDiscount(
+                      item.quantity,
+                      item.trade_scheme
+                    ) *
+                      item.price_per_unit) /
+                    item.quantity
+                  : 0;
+
+                // Calculate price after trade scheme per piece
+                const priceAfterTradeSchemePerPiece =
+                  item.price_per_unit - tradeSchemeDiscountPerPiece;
+
+                // Calculate percentage discount per piece
+                const percentageDiscountPerPiece = item.discount_percentage
+                  ? priceAfterTradeSchemePerPiece *
+                    (item.discount_percentage / 100)
+                  : 0;
+
+                // Calculate final rate per unit
+                const netRateAfterDiscount = item.final_price / item.quantity;
+
+                // Format quantity display
+                const qtyDisplay = item.product.name
+                  .toLowerCase()
+                  .includes("gift set")
+                  ? `${item.quantity} Pcs`
+                  : `${item.quantity} Pcs`;
+
+                return `
+                <tr style="border-bottom: 1px solid #eee;">
+                  <td style="padding: 12px; text-align: center;">${qtyDisplay}</td>
+                  <td style="padding: 12px; text-align: left;">${productName}</td>
+                  <td style="padding: 12px; text-align: right;">${item.price_per_unit.toFixed(
+                    2
+                  )}</td>
+                  <td style="padding: 12px; text-align: center;">${
+                    item.trade_scheme || "-"
+                  }</td>
+                  <td style="padding: 12px; text-align: right;">${tradeSchemeDiscountPerPiece.toFixed(
+                    2
+                  )}</td>
+                  <td style="padding: 12px; text-align: right;">${
+                    item.discount_percentage?.toFixed(1) || "-"
+                  }</td>
+                  <td style="padding: 12px; text-align: right;">${percentageDiscountPerPiece.toFixed(
+                    2
+                  )}</td>
+                  <td style="padding: 12px; text-align: right;">${netRateAfterDiscount.toFixed(
+                    2
+                  )}</td>
+                  <td style="padding: 12px; text-align: right;">${item.final_price.toFixed(
+                    2
+                  )}</td>
+                </tr>
+              `;
+              })
+              .join("")}
+          </tbody>
+        </table>
+
+        <div style="display: flex; justify-content: space-between; margin: 20px 0;">
+          <div style="flex: 1;">
+            <h3 style="margin: 0 0 10px 0; color: #333;">Previous Balance</h3>
+            <table style="width: 100%; border-collapse: collapse;">
+              <tr style="background-color: #f5f5f5;">
+                <td style="padding: 8px;">Previous Total Rs.:</td>
+                <td style="padding: 8px; text-align: right;">24,667.00</td>
+              </tr>
+              ${
+                saleData.credit_sale
+                  ? `
+                <tr>
+                  <td style="padding: 8px;">Current Bill Rs.:</td>
+                  <td style="padding: 8px; text-align: right;">${saleData.final_amount.toFixed(
+                    2
+                  )}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px;">Total Balance Rs.:</td>
+                  <td style="padding: 8px; text-align: right;">${(
+                    24667.0 + saleData.final_amount
+                  ).toFixed(2)}</td>
+                </tr>
+                `
+                  : `
+                <tr>
+                  <td style="padding: 8px;">Cash Balance Rs.:</td>
+                  <td style="padding: 8px; text-align: right;">0.00</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px;">Total Receivable Rs.:</td>
+                  <td style="padding: 8px; text-align: right;">24,667.00</td>
+                </tr>
+                `
+              }
+            </table>
+          </div>
+          <div style="flex: 1; margin-left: 40px;">
+            <h3 style="margin: 0 0 10px 0; color: #333;">Current Bill</h3>
+            <table style="width: 100%; border-collapse: collapse;">
+              <tr>
+                <td style="padding: 8px;">Sub Total:</td>
+                <td style="padding: 8px; text-align: right;">${saleData.total_amount.toFixed(
+                  2
+                )}</td>
+              </tr>
+              ${(() => {
+                // Calculate total discount (item-level + bill-level)
+                let totalDiscount =
+                  saleData.total_amount - saleData.final_amount;
+
+                // Show bill discount percentage if it exists
+                const billDiscountSection = saleData.bill_discount_percentage
+                  ? `
+                  <tr>
+                    <td style="padding: 8px;">Bill Discount:</td>
+                    <td style="padding: 8px; text-align: right;">${saleData.bill_discount_percentage}%</td>
+                  </tr>
+                `
+                  : "";
+
+                return `
+                  ${billDiscountSection}
+                  <tr style="border-top: 1px solid #eee;">
+                    <td style="padding: 8px;">Total Discount:</td>
+                    <td style="padding: 8px; text-align: right; color: #EA6AA9;">-${totalDiscount.toFixed(
+                      2
+                    )}</td>
+                  </tr>
+                  <tr style="font-weight: bold;">
+                    <td style="padding: 8px;">Net Amount:</td>
+                    <td style="padding: 8px; text-align: right;">${saleData.final_amount.toFixed(
+                      2
+                    )}</td>
+                  </tr>
+                `;
+              })()}
+            </table>
+          </div>
+        </div>
+
+        ${
+          saleData.notes
+            ? `
+          <div style="margin: 20px 0; padding-top: 20px; border-top: 1px solid #eee;">
+            <strong>Notes:</strong> ${saleData.notes}
+          </div>
+        `
+            : ""
+        }
+
+        <div style="margin-top: 40px; text-align: center; color: #666;">
+          <p style="margin: 5px 0;">Thank you for your business!</p>
+        </div>
+      </div>
+    `;
+
+      const printWindow = window.open("", "_blank");
+      if (printWindow) {
+        printWindow.document.write(`
+          <html>
+            <head>
+              <title>Nikka Nikki Invoice - ${saleData.buyer_name} - ${saleData.invoice_number}</title>
+            </head>
+            <body>
+              ${receiptContent}
+              <script>
+                window.onload = function() {
+                  window.print();
+                  document.title = "Nikka Nikki Invoice - ${saleData.buyer_name} - ${saleData.invoice_number}";
+                };
+              </script>
+            </body>
+          </html>
+        `);
+        printWindow.document.close();
+      }
+    } catch (error) {
+      console.error("Error printing receipt:", error);
+    }
+  };
+
+  // Helper function to calculate trade scheme discount
+  function calculateTradeSchemeDiscount(
+    quantity: number,
+    scheme: string
+  ): number {
+    if (!scheme) return 0;
+
+    const [buy, free] = scheme.split("+").map((num) => parseInt(num.trim()));
+    if (isNaN(buy) || isNaN(free) || buy <= 0 || free <= 0) return 0;
+
+    // Calculate proportional free items
+    const freeItems = (free * quantity) / (buy + free);
+    return freeItems;
+  }
+
   return (
     <div className="space-y-6">
       <div>
@@ -187,6 +506,13 @@ export default function RecentActivities() {
                     {formatDate(sale.sale_date)}
                   </p>
                 </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => printReceipt(sale.id)}
+                >
+                  <Printer className="h-4 w-4" />
+                </Button>
               </CardContent>
             </Card>
           ))}
