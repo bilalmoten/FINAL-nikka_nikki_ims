@@ -11,6 +11,8 @@ import {
   Calculator,
   ShoppingCart,
   X,
+  Pencil,
+  Copy,
 } from "lucide-react";
 import { cn, formatGiftSetQuantity } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -516,7 +518,7 @@ export default function SalesPage() {
           )
         `
         )
-        .order("created_at", { ascending: false })
+        .order("sale_date", { ascending: false })
         .limit(50);
 
       if (error) throw error;
@@ -2138,156 +2140,190 @@ export default function SalesPage() {
         <h2 className="text-2xl font-bold mb-4">Recent Sales</h2>
         <div className="space-y-4">
           {recentSales?.map((sale) => (
-            <Card key={sale.id}>
-              <CardContent className="flex items-center justify-between py-4">
-                <div className="flex items-center gap-4">
-                  <Badge className="bg-green-500">
-                    <ShoppingCart className="h-4 w-4 mr-1" />
-                    Sale
-                  </Badge>
-                  <div>
-                    <p className="font-medium">
-                      Invoice #{sale.invoice_number}
-                    </p>
-                    <p className="text-sm text-muted-foreground">
-                      {format(new Date(sale.sale_date), "PPP")}
-                    </p>
-                    <p className="text-sm text-muted-foreground">
-                      {sale.buyer_name}
-                      {sale.contact_no && ` • ${sale.contact_no}`}
-                    </p>
+            <Card key={sale.id} className="overflow-hidden">
+              <CardContent className="p-0">
+                {/* Header Section */}
+                <div className="p-4 bg-secondary/5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <Badge
+                        variant="secondary"
+                        className="bg-green-500/10 text-green-600 hover:bg-green-500/20"
+                      >
+                        <ShoppingCart className="h-3.5 w-3.5 mr-1" />
+                        Sale #{sale.invoice_number}
+                      </Badge>
+                      <p className="text-sm text-muted-foreground">
+                        {format(new Date(sale.sale_date), "PPP")}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setEditingSaleId(sale.id);
+                          setEditingInvoiceNumber(sale.invoice_number);
+                          loadSaleToForm(sale, true);
+                        }}
+                      >
+                        <span className="sr-only">Edit</span>
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => loadSaleToForm(sale, false)}
+                      >
+                        <span className="sr-only">Copy</span>
+                        <Copy className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => printReceipt(sale)}
+                      >
+                        <span className="sr-only">Print</span>
+                        <Printer className="h-4 w-4" />
+                      </Button>
+                      <DeleteButton
+                        onDelete={() => deleteSale.mutate(sale.id)}
+                        loading={deleteSale.isPending}
+                        title="Reverse Sale"
+                        description="This will reverse the sale and restore the product quantities. This action cannot be undone."
+                      />
+                    </div>
+                  </div>
+
+                  <div className="mt-3">
+                    <div className="flex items-center gap-1">
+                      <p className="font-medium text-lg">{sale.buyer_name}</p>
+                      {sale.contact_no && (
+                        <p className="text-sm text-muted-foreground">
+                          • {sale.contact_no}
+                        </p>
+                      )}
+                    </div>
+                    {sale.notes && (
+                      <p className="text-sm text-muted-foreground mt-1">
+                        Note: {sale.notes}
+                      </p>
+                    )}
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      setEditingSaleId(sale.id);
-                      setEditingInvoiceNumber(sale.invoice_number);
-                      loadSaleToForm(sale, true);
-                    }}
-                  >
-                    Edit
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      loadSaleToForm(sale, false);
-                    }}
-                  >
-                    Copy
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => printReceipt(sale)}
-                  >
-                    <Printer className="h-4 w-4" />
-                  </Button>
-                  <DeleteButton
-                    onDelete={() => deleteSale.mutate(sale.id)}
-                    loading={deleteSale.isPending}
-                    title="Reverse Sale"
-                    description="This will reverse the sale and restore the product quantities. This action cannot be undone."
-                  />
-                </div>
-              </CardContent>
-              <Collapsible>
-                <CollapsibleTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    className="w-full flex justify-between items-center p-4 hover:bg-secondary/10"
-                  >
-                    View Items
-                    <ChevronDown className="h-4 w-4" />
-                  </Button>
-                </CollapsibleTrigger>
-                <CollapsibleContent>
-                  <div className="px-4 pb-4">
-                    <div className="space-y-2">
-                      {sale.items?.map((item) => (
-                        <div
-                          key={item.id}
-                          className="flex justify-between items-center py-2 border-t first:border-t-0"
-                        >
-                          <div>
-                            <p className="font-medium">{item.product?.name}</p>
-                            <p className="text-sm text-muted-foreground">
-                              {item.quantity} × $
-                              {item.price_per_unit?.toFixed(2)}
-                            </p>
-                            {item.trade_scheme && (
-                              <p className="text-sm text-muted-foreground">
-                                Trade Scheme: {item.trade_scheme}
+
+                {/* Items Section */}
+                <Collapsible>
+                  <CollapsibleTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      className="w-full flex justify-between items-center px-4 py-3 hover:bg-secondary/10"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span>View Items</span>
+                        <Badge variant="outline" className="ml-2">
+                          {sale.items?.length} items
+                        </Badge>
+                      </div>
+                      <ChevronDown className="h-4 w-4" />
+                    </Button>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent>
+                    <div className="px-4 pb-4">
+                      <div className="space-y-2 divide-y divide-border">
+                        {sale.items?.map((item) => (
+                          <div
+                            key={item.id}
+                            className="flex justify-between items-start pt-3 first:pt-0"
+                          >
+                            <div className="space-y-1">
+                              <p className="font-medium">
+                                {item.product?.name}
                               </p>
-                            )}
-                          </div>
-                          <div className="text-right">
+                              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                                <span>
+                                  {item.quantity} × $
+                                  {item.price_per_unit?.toFixed(2)}
+                                </span>
+                                {(item.discount_percentage ||
+                                  item.discount_amount) && (
+                                  <Badge
+                                    variant="secondary"
+                                    className="text-xs"
+                                  >
+                                    {item.discount_percentage &&
+                                      `${item.discount_percentage}% `}
+                                    {item.discount_amount &&
+                                      `$${item.discount_amount} `}
+                                    off
+                                  </Badge>
+                                )}
+                              </div>
+                              {item.trade_scheme && (
+                                <Badge variant="outline" className="text-xs">
+                                  Trade Scheme: {item.trade_scheme}
+                                </Badge>
+                              )}
+                            </div>
                             <p className="font-medium">
                               ${item.final_price.toFixed(2)}
                             </p>
-                            {(item.discount_percentage ||
-                              item.discount_amount) && (
-                              <p className="text-sm text-muted-foreground">
-                                {item.discount_percentage &&
-                                  `${item.discount_percentage}% `}
-                                {item.discount_amount &&
-                                  `$${item.discount_amount} `}
-                                off
-                              </p>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Summary Section */}
+                      {(sale.bill_discount_percentage ||
+                        sale.bill_discount_amount) && (
+                        <div className="mt-4 pt-4 border-t">
+                          <div className="space-y-2">
+                            <div className="flex justify-between text-sm">
+                              <span className="text-muted-foreground">
+                                Subtotal
+                              </span>
+                              <span>${sale.total_amount.toFixed(2)}</span>
+                            </div>
+                            {sale.bill_discount_amount && (
+                              <div className="flex justify-between text-sm">
+                                <span className="text-muted-foreground">
+                                  Bill Discount
+                                </span>
+                                <span className="text-red-500">
+                                  -${sale.bill_discount_amount.toFixed(2)}
+                                </span>
+                              </div>
+                            )}
+                            {sale.bill_discount_percentage && (
+                              <div className="flex justify-between text-sm">
+                                <span className="text-muted-foreground">
+                                  Bill Discount ({sale.bill_discount_percentage}
+                                  %)
+                                </span>
+                                <span className="text-red-500">
+                                  -$
+                                  {(
+                                    (sale.bill_discount_percentage / 100) *
+                                    (sale.total_amount -
+                                      (sale.bill_discount_amount || 0))
+                                  ).toFixed(2)}
+                                </span>
+                              </div>
                             )}
                           </div>
                         </div>
-                      ))}
+                      )}
                     </div>
-                    {(sale.bill_discount_percentage ||
-                      sale.bill_discount_amount) && (
-                      <div className="mt-4 pt-4 border-t">
-                        <div className="flex justify-between text-sm text-muted-foreground">
-                          <span>Subtotal:</span>
-                          <span>${sale.total_amount.toFixed(2)}</span>
-                        </div>
-                        {sale.bill_discount_amount && (
-                          <div className="flex justify-between text-sm text-muted-foreground">
-                            <span>Bill Discount:</span>
-                            <span>
-                              -${sale.bill_discount_amount.toFixed(2)}
-                            </span>
-                          </div>
-                        )}
-                        {sale.bill_discount_percentage && (
-                          <div className="flex justify-between text-sm text-muted-foreground">
-                            <span>
-                              Bill Discount ({sale.bill_discount_percentage}%):
-                            </span>
-                            <span>
-                              -$
-                              {(
-                                (sale.bill_discount_percentage / 100) *
-                                (sale.total_amount -
-                                  (sale.bill_discount_amount || 0))
-                              ).toFixed(2)}
-                            </span>
-                          </div>
-                        )}
-                        <div className="flex justify-between font-medium mt-2">
-                          <span>Total:</span>
-                          <span>${sale.final_amount.toFixed(2)}</span>
-                        </div>
-                      </div>
-                    )}
-                    {sale.notes && (
-                      <div className="mt-4 pt-4 border-t">
-                        <p className="text-sm text-muted-foreground">
-                          Note: {sale.notes}
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                </CollapsibleContent>
-              </Collapsible>
+                  </CollapsibleContent>
+                </Collapsible>
+
+                {/* Footer Section */}
+                <div className="px-4 py-3 bg-secondary/5 border-t flex justify-between items-center">
+                  <span className="font-medium">Total Amount</span>
+                  <span className="text-lg font-semibold">
+                    ${sale.final_amount.toFixed(2)}
+                  </span>
+                </div>
+              </CardContent>
             </Card>
           ))}
 
